@@ -48,13 +48,25 @@ pub enum BdeError {
         method: u16,
     },
 
-    /// The metadata carries no password-protected VMK (protection type 0x2000),
-    /// so `unlock_with_password` cannot proceed. The protector types that *were*
-    /// present are listed to guide the examiner toward the right unlock path.
-    #[error("no password protector (type 0x2000) present; protectors found: {found:?}")]
-    NoPasswordProtector {
+    /// The metadata carries no VMK for the protector the caller tried to unlock
+    /// with (password `0x2000` or recovery password `0x0800`). The protector
+    /// types that *were* present are listed to guide the examiner toward the
+    /// right unlock path.
+    #[error("no {protector} protector present; protectors found: {found:?}")]
+    NoUnlockProtector {
+        /// The protector the caller attempted (e.g. "password", "recovery password").
+        protector: &'static str,
         /// The key-protection types that were present.
         found: Vec<u16>,
+    },
+
+    /// The supplied recovery password is not a valid 48-digit BitLocker recovery
+    /// key (wrong group count, a non-digit, a failed divisible-by-11 checksum, or
+    /// an out-of-range group). The specific reason is named.
+    #[error("invalid recovery password: {reason}")]
+    InvalidRecoveryPassword {
+        /// Why the recovery password was rejected.
+        reason: &'static str,
     },
 
     /// The password-protected VMK is missing its stretch key or AES-CCM key

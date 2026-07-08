@@ -8,10 +8,12 @@
 
 use std::io::{Read, Seek, SeekFrom};
 
-use crate::crypto::{aes_ccm_unwrap, password_hash, stretch_key, SectorCipher};
+use crate::crypto::{aes_ccm_unwrap, password_hash, recovery_key_hash, stretch_key, SectorCipher};
 use crate::error::{BdeError, Result};
 use crate::header::VolumeHeader;
-use crate::metadata::{FveMetadata, PROTECTION_PASSWORD, VALUE_TYPE_AES_CCM, VALUE_TYPE_STRETCH};
+use crate::metadata::{
+    FveMetadata, PROTECTION_PASSWORD, PROTECTION_RECOVERY, VALUE_TYPE_AES_CCM, VALUE_TYPE_STRETCH,
+};
 use crate::method::{EncryptionMethod, SectorCipherKind};
 
 /// Encryption method sentinel: the volume is not encrypted.
@@ -63,8 +65,42 @@ impl BitLockerVolume {
     /// password protector, absent key material, or a wrong password (the AES-CCM
     /// tag fails to verify).
     pub fn unlock_with_password<R: Read + Seek>(
-        mut reader: R,
+        reader: R,
         password: &str,
+    ) -> Result<DecryptedVolume<R>> {
+        Self::unlock_with_protector(
+            reader,
+            PROTECTION_PASSWORD,
+            "password",
+            password_hash(password),
+        )
+    }
+
+    /// Unlock the volume with a 48-digit `recovery` password, returning a
+    /// plaintext view. Uses the recovery protector (`0x0800`) and the recovery
+    /// key-derivation ([`crate::crypto::recovery_key_hash`]).
+    ///
+    /// # Errors
+    /// [`BdeError::InvalidRecoveryPassword`] if the recovery password is
+    /// malformed; otherwise the same failures as [`Self::unlock_with_password`]
+    /// (non-BitLocker image, unsupported/unvalidated cipher, no recovery
+    /// protector, absent key material, or a wrong key).
+    pub fn unlock_with_recovery_password<R: Read + Seek>(
+        reader: R,
+        recovery: &str,
+    ) -> Result<DecryptedVolume<R>> {
+        let key_hash = recovery_key_hash(recovery)
+            .map_err(|reason| BdeError::InvalidRecoveryPassword { reason })?;
+        Self::unlock_with_protector(reader, PROTECTION_RECOVERY, "recovery password", key_hash)
+    }
+
+    /// Shared unlock path: parse metadata, gate the cipher method, derive the
+    /// sector cipher from the given protector, and return the plaintext view.
+    fn unlock_with_protector<R: Read + Seek>(
+        mut reader: R,
+        protector_type: u16,
+        protector_name: &'static str,
+        key_hash: [u8; 32],
     ) -> Result<DecryptedVolume<R>> {
         let metadata = Self::read_metadata(&mut reader)?;
 
@@ -78,7 +114,7 @@ impl BitLockerVolume {
             .validated_kind()
             .ok_or(BdeError::UnvalidatedEncryptionMethod { method: raw })?;
 
-        let cipher = derive_cipher(&metadata, kind, password)?;
+        let cipher = derive_cipher(&metadata, kind, protector_type, protector_name, &key_hash)?;
         let total_size = reader.seek(SeekFrom::End(0))?;
 
         Ok(DecryptedVolume {
@@ -91,18 +127,23 @@ impl BitLockerVolume {
     }
 }
 
-/// Derive the sector cipher from the password-protected VMK, building the
-/// transform for the already-validated `kind`.
+/// Derive the sector cipher from the VMK protected by `protector_type`, using
+/// `key_hash` as the stretch input, and build the transform for the
+/// already-validated `kind`. `protector_name` names the protector in the
+/// not-found error.
 fn derive_cipher(
     metadata: &FveMetadata,
     kind: SectorCipherKind,
-    password: &str,
+    protector_type: u16,
+    protector_name: &'static str,
+    key_hash: &[u8; 32],
 ) -> Result<SectorCipher> {
-    // 1. Locate the password-protected VMK.
+    // 1. Locate the VMK for the requested protector.
     let vmk = metadata
         .vmk_entries()
-        .find(|e| e.protection_type() == Some(PROTECTION_PASSWORD))
-        .ok_or_else(|| BdeError::NoPasswordProtector {
+        .find(|e| e.protection_type() == Some(protector_type))
+        .ok_or_else(|| BdeError::NoUnlockProtector {
+            protector: protector_name,
             found: metadata.protector_types(),
         })?;
 
@@ -131,8 +172,8 @@ fn derive_cipher(
         })?;
     salt.copy_from_slice(salt_src);
 
-    // 2. Password -> stretched key -> unwrap the VMK.
-    let stretched = stretch_key(&password_hash(password), &salt);
+    // 2. Key hash -> stretched key -> unwrap the VMK.
+    let stretched = stretch_key(key_hash, &salt);
     let vmk_container =
         aes_ccm_unwrap(&stretched, &vmk_ccm.data).ok_or(BdeError::AuthenticationFailed {
             what: "volume master key",
@@ -470,16 +511,18 @@ mod tests {
     }
 
     /// Build a minimal synthetic method-0x8002 (AES-128-CBC, no diffuser) volume
-    /// plus the plaintext of its relocated first sector. The FVEK container holds
-    /// only a 128-bit FVEK (no TWEAK) — the key layout for a no-diffuser volume.
-    fn build_cbc_volume(password: &str) -> (Vec<u8>, [u8; 512]) {
+    /// plus the plaintext of its relocated first sector, wrapping the VMK under
+    /// `protector_type` with `key_hash` as the stretch input. The FVEK container
+    /// holds only a 128-bit FVEK (no TWEAK) — the key layout for a no-diffuser
+    /// volume.
+    fn build_cbc_volume(protector_type: u16, key_hash: [u8; 32]) -> (Vec<u8>, [u8; 512]) {
         let salt = [0x37u8; 16];
         let fvek = [0x13u8; 16];
         let vmk = [0x46u8; 32];
 
         let mut vmk_container = vec![0u8; 44];
         vmk_container[12..44].copy_from_slice(&vmk);
-        let stretched = stretch_key(&password_hash(password), &salt);
+        let stretched = stretch_key(&key_hash, &salt);
         let vmk_ccm = aes_ccm_wrap(&stretched, &[0x57; 12], &vmk_container);
 
         // No TWEAK for 0x8002: the container carries only the FVEK at offset 12.
@@ -493,7 +536,7 @@ mod tests {
         let vmk_ccm_entry = entry(0, VALUE_TYPE_AES_CCM, &vmk_ccm);
 
         let mut vmk_data = vec![0u8; 28];
-        vmk_data[26..28].copy_from_slice(&PROTECTION_PASSWORD.to_le_bytes());
+        vmk_data[26..28].copy_from_slice(&protector_type.to_le_bytes());
         vmk_data.extend_from_slice(&stretch_entry);
         vmk_data.extend_from_slice(&vmk_ccm_entry);
         let vmk_entry = entry(ENTRY_TYPE_VMK, VALUE_TYPE_VMK, &vmk_data);
@@ -668,7 +711,10 @@ mod tests {
         // Recovery-only volume — no password protector to unlock with.
         let img = meta_only_image(0x8000, &[0x0800], [0x1000, 0, 0], Some(0x1000));
         let res = BitLockerVolume::unlock_with_password(Cursor::new(img), "x");
-        assert!(matches!(res, Err(BdeError::NoPasswordProtector { .. })));
+        assert!(matches!(
+            res,
+            Err(BdeError::NoUnlockProtector { protector, .. }) if protector == "password"
+        ));
     }
 
     #[test]

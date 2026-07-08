@@ -26,6 +26,8 @@ pub const VALUE_TYPE_VMK: u16 = 0x0008;
 
 /// Key-protection type: password.
 pub const PROTECTION_PASSWORD: u16 = 0x2000;
+/// Key-protection type: recovery password (the 48-digit numeric key).
+pub const PROTECTION_RECOVERY: u16 = 0x0800;
 
 /// One FVE metadata entry (`entry_type`, `value_type`, `version`, and the raw
 /// value data that follows the 8-byte entry header).

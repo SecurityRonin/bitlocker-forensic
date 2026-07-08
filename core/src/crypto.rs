@@ -59,6 +59,45 @@ pub fn stretch_key(password_hash: &[u8; 32], salt: &[u8; 16]) -> [u8; 32] {
     stretch_key_n(password_hash, salt, STRETCH_ITERATIONS)
 }
 
+/// Derive the 32-byte key-stretch input from a 48-digit BitLocker **recovery
+/// password** (`libbde_recovery.c`). The password is eight groups of six digits;
+/// each group must be divisible by 11 (its checksum) and, divided by 11, fit in
+/// 16 bits. Those eight 16-bit words, little-endian, form a 16-byte binary key,
+/// and its `SHA-256` is the hash fed to [`stretch_key`] — the recovery analogue
+/// of [`password_hash`].
+///
+/// # Errors
+/// Returns a static reason string when the format is malformed (not eight
+/// six-digit groups, a non-digit, a failed `% 11` checksum, or an out-of-range
+/// group) so the caller can fail loud rather than derive a bogus key.
+pub fn recovery_key_hash(recovery: &str) -> Result<[u8; 32], &'static str> {
+    let mut key = [0u8; 16];
+    let mut groups = 0usize;
+    for (i, group) in recovery.split('-').enumerate() {
+        if i >= 8 {
+            return Err("recovery password must be exactly 8 groups");
+        }
+        if group.len() != 6 || !group.bytes().all(|b| b.is_ascii_digit()) {
+            return Err("each recovery group must be 6 digits");
+        }
+        // 6 ASCII digits fit in u32 (max 999_999).
+        let value: u32 = group.parse().map_err(|_| "invalid recovery digits")?;
+        if value % 11 != 0 {
+            return Err("recovery group failed the divisible-by-11 checksum");
+        }
+        let word = value / 11;
+        if word > u32::from(u16::MAX) {
+            return Err("recovery group out of range (value / 11 exceeds 16 bits)");
+        }
+        key[i * 2..i * 2 + 2].copy_from_slice(&(word as u16).to_le_bytes());
+        groups = i + 1;
+    }
+    if groups != 8 {
+        return Err("recovery password must be exactly 8 groups");
+    }
+    Ok(Sha256::digest(key).into())
+}
+
 /// AES-CCM-unwrap a key. `value_data` is an AES-CCM-encrypted-key entry value:
 /// `nonce(12) | MAC(16) | ciphertext`. `key` is the 256-bit unwrapping key
 /// (stretched key for the VMK, VMK for the FVEK). Returns the plaintext container
