@@ -247,6 +247,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn recovery_key_hash_matches_independent_python() {
+        // Independent Python: 8x u16-LE of (group / 11), then SHA-256 of the
+        // 16-byte key. See docs/validation.md.
+        assert_eq!(
+            hex(
+                &recovery_key_hash("111111-111111-111111-111111-111111-111111-111111-111111")
+                    .unwrap()
+            ),
+            "17f2c896b4e802b3668dfe7f8b22ab00b7adbba67097643f3c02767abc72648e"
+        );
+        // A real minted recovery password (m8003).
+        assert_eq!(
+            hex(
+                &recovery_key_hash("068002-479633-277629-623568-540826-435039-327756-375705")
+                    .unwrap()
+            ),
+            "6bb2448ffc833b574bcc0e7c3d9f8e8afd7410692289e7405cbcc42a7fee3de3"
+        );
+    }
+
+    #[test]
+    fn recovery_key_hash_rejects_malformed() {
+        // Wrong group count.
+        assert!(recovery_key_hash("111111").is_err());
+        // Non-digit character.
+        assert!(
+            recovery_key_hash("111111-111111-111111-111111-111111-111111-111111-11111x").is_err()
+        );
+        // Group not exactly six digits.
+        assert!(
+            recovery_key_hash("11111-111111-111111-111111-111111-111111-111111-111111").is_err()
+        );
+        // Group not divisible by 11 (bad checksum).
+        assert!(
+            recovery_key_hash("111112-111111-111111-111111-111111-111111-111111-111111").is_err()
+        );
+        // Group / 11 exceeds 0xffff (out of range): 999999 / 11 = 90909.
+        assert!(
+            recovery_key_hash("999999-111111-111111-111111-111111-111111-111111-111111").is_err()
+        );
+    }
+
     fn sample_sector() -> Vec<u8> {
         (0..512u32)
             .map(|i| (i.wrapping_mul(31) ^ 0xA5) as u8)

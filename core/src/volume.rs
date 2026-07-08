@@ -545,12 +545,47 @@ mod tests {
         // decoder here, so this proves the 0x8002 pipeline is internally
         // consistent, NOT that it matches BitLocker. The Tier-1 pybde oracle
         // (oracle_bitlocker1.rs) is the real proof.
-        let (image, plain) = build_cbc_volume("cbc-pw");
+        let (image, plain) = build_cbc_volume(PROTECTION_PASSWORD, password_hash("cbc-pw"));
         let mut vol = BitLockerVolume::unlock_with_password(Cursor::new(image), "cbc-pw").unwrap();
         let mut buf = [0u8; 512];
         vol.read_at(0, &mut buf).unwrap();
         assert_eq!(buf, plain);
         assert_eq!(vol.metadata().encryption_method, 0x8002);
+    }
+
+    #[test]
+    fn unlock_and_read_synthetic_recovery_volume() {
+        // Recovery-password unlock over a synthetic 0x8002 volume: the VMK is
+        // wrapped with the recovery-key hash under a recovery protector (0x0800).
+        // Tier-3 self-consistency for the recovery-pw wiring; the real end-to-end
+        // proof is the m8003/vault Tier-1/2 oracles.
+        let rk = "111111-111111-111111-111111-111111-111111-111111-111111";
+        let key_hash = crate::crypto::recovery_key_hash(rk).unwrap();
+        let (image, plain) = build_cbc_volume(crate::metadata::PROTECTION_RECOVERY, key_hash);
+        let mut vol =
+            BitLockerVolume::unlock_with_recovery_password(Cursor::new(image), rk).unwrap();
+        let mut buf = [0u8; 512];
+        vol.read_at(0, &mut buf).unwrap();
+        assert_eq!(buf, plain);
+        assert_eq!(vol.metadata().encryption_method, 0x8002);
+    }
+
+    #[test]
+    fn recovery_unlock_rejects_malformed_password() {
+        let rk = "111111-111111-111111-111111-111111-111111-111111-111111";
+        let key_hash = crate::crypto::recovery_key_hash(rk).unwrap();
+        let (image, _) = build_cbc_volume(crate::metadata::PROTECTION_RECOVERY, key_hash);
+        let res = BitLockerVolume::unlock_with_recovery_password(Cursor::new(image), "nope");
+        assert!(matches!(res, Err(BdeError::InvalidRecoveryPassword { .. })));
+    }
+
+    #[test]
+    fn no_recovery_protector_errors() {
+        // A password-only volume has no recovery protector to unlock with.
+        let rk = "111111-111111-111111-111111-111111-111111-111111-111111";
+        let (image, _) = build_cbc_volume(PROTECTION_PASSWORD, password_hash("cbc-pw"));
+        let res = BitLockerVolume::unlock_with_recovery_password(Cursor::new(image), rk);
+        assert!(matches!(res, Err(BdeError::NoUnlockProtector { .. })));
     }
 
     #[test]
