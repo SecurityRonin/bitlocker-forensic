@@ -32,7 +32,7 @@ pub enum BdeError {
 
     /// The volume's encryption method is not one this build decrypts. The raw
     /// method value is included.
-    #[error("unsupported encryption method 0x{method:04x} (this build decrypts 0x8000 AES-128-CBC + Elephant Diffuser)")]
+    #[error("unsupported encryption method 0x{method:04x} (this build decrypts 0x8000 AES-128-CBC + Elephant Diffuser and 0x8002 AES-128-CBC)")]
     UnsupportedEncryptionMethod {
         /// The raw 16-bit encryption-method value from the metadata header.
         method: u16,

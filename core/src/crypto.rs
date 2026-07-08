@@ -190,22 +190,36 @@ pub fn diffuser_b_encrypt(sector: &mut [u8]) {
     from_words(&d, sector);
 }
 
-/// The volume sector cipher for method 0x8000 (AES-128-CBC + Elephant Diffuser).
-/// Holds the 16-byte FVEK and TWEAK keys derived from the FVEK entry.
+/// The volume sector cipher. Both supported methods (0x8000 and 0x8002) share
+/// the FVEK-keyed AES-128-CBC core; the presence of the TWEAK key is the mode
+/// discriminant — `Some` applies the Elephant Diffuser (method 0x8000), `None`
+/// stops at the CBC plaintext (method 0x8002).
 pub struct SectorCipher {
     fvek: [u8; 16],
-    tweak: Aes128,
     fvek_ecb: Aes128,
+    tweak: Option<Aes128>,
 }
 
 impl SectorCipher {
-    /// Build the sector cipher from the 16-byte FVEK and TWEAK keys.
+    /// Build a method-0x8000 cipher (AES-128-CBC + Elephant Diffuser) from the
+    /// 16-byte FVEK and TWEAK keys.
     #[must_use]
     pub fn new(fvek: [u8; 16], tweak: [u8; 16]) -> SectorCipher {
         SectorCipher {
             fvek,
-            tweak: Aes128::new(GenericArray::from_slice(&tweak)),
             fvek_ecb: Aes128::new(GenericArray::from_slice(&fvek)),
+            tweak: Some(Aes128::new(GenericArray::from_slice(&tweak))),
+        }
+    }
+
+    /// Build a method-0x8002 cipher (AES-128-CBC, no diffuser) from the 16-byte
+    /// FVEK. A no-diffuser volume has no TWEAK key.
+    #[must_use]
+    pub fn new_cbc(fvek: [u8; 16]) -> SectorCipher {
+        SectorCipher {
+            fvek,
+            fvek_ecb: Aes128::new(GenericArray::from_slice(&fvek)),
+            tweak: None,
         }
     }
 
@@ -217,12 +231,12 @@ impl SectorCipher {
 
     /// The 32-byte per-sector key: `ECB(TWEAK, LE128(off))` ‖
     /// `ECB(TWEAK, LE128(off) with byte[15]=0x80)`.
-    fn sector_key(&self, byte_offset: u64) -> [u8; 32] {
+    fn sector_key(tweak: &Aes128, byte_offset: u64) -> [u8; 32] {
         let mut iv = [0u8; 16];
         iv[0..8].copy_from_slice(&byte_offset.to_le_bytes());
-        let lower = Self::ecb(&self.tweak, &iv);
+        let lower = Self::ecb(tweak, &iv);
         iv[15] = 0x80;
-        let upper = Self::ecb(&self.tweak, &iv);
+        let upper = Self::ecb(tweak, &iv);
         let mut key = [0u8; 32];
         key[0..16].copy_from_slice(&lower);
         key[16..32].copy_from_slice(&upper);
@@ -239,7 +253,6 @@ impl SectorCipher {
     /// The sector length must be a non-zero multiple of 16.
     #[must_use]
     pub fn decrypt_sector(&self, cipher: &[u8], byte_offset: u64) -> Vec<u8> {
-        let sector_key = self.sector_key(byte_offset);
         let iv = self.cbc_iv(byte_offset);
         let mut buf = cipher.to_vec();
 
@@ -255,11 +268,15 @@ impl SectorCipher {
         match dec.decrypt_padded_mut::<NoPadding>(&mut buf[..len]) {
             Ok(plain) => {
                 let plain_len = plain.len();
-                // Diffuser B then A, then XOR the sector key.
-                diffuser_b_decrypt(&mut buf[..plain_len]);
-                diffuser_a_decrypt(&mut buf[..plain_len]);
-                for (i, b) in buf[..plain_len].iter_mut().enumerate() {
-                    *b ^= sector_key[i % 32];
+                // Method 0x8000 only: Diffuser B then A, then XOR the sector key.
+                // Method 0x8002 stops at the CBC plaintext above.
+                if let Some(tweak) = &self.tweak {
+                    let sector_key = Self::sector_key(tweak, byte_offset);
+                    diffuser_b_decrypt(&mut buf[..plain_len]);
+                    diffuser_a_decrypt(&mut buf[..plain_len]);
+                    for (i, b) in buf[..plain_len].iter_mut().enumerate() {
+                        *b ^= sector_key[i % 32];
+                    }
                 }
             }
             // `len` is a 16-byte multiple, so NoPadding CBC decryption cannot
@@ -270,19 +287,21 @@ impl SectorCipher {
     }
 
     /// Encrypt one sector — the inverse of [`Self::decrypt_sector`], used only by
-    /// the round-trip self-consistency test.
+    /// the round-trip self-consistency tests.
     #[cfg(test)]
     #[must_use]
     pub fn encrypt_sector(&self, plain: &[u8], byte_offset: u64) -> Vec<u8> {
         use aes::cipher::BlockEncryptMut;
-        let sector_key = self.sector_key(byte_offset);
         let iv = self.cbc_iv(byte_offset);
         let mut buf = plain.to_vec();
-        for (i, b) in buf.iter_mut().enumerate() {
-            *b ^= sector_key[i % 32];
+        if let Some(tweak) = &self.tweak {
+            let sector_key = Self::sector_key(tweak, byte_offset);
+            for (i, b) in buf.iter_mut().enumerate() {
+                *b ^= sector_key[i % 32];
+            }
+            diffuser_a_encrypt(&mut buf);
+            diffuser_b_encrypt(&mut buf);
         }
-        diffuser_a_encrypt(&mut buf);
-        diffuser_b_encrypt(&mut buf);
         let enc = cbc::Encryptor::<Aes128>::new(
             GenericArray::from_slice(&self.fvek),
             GenericArray::from_slice(&iv),
@@ -393,6 +412,18 @@ mod tests {
     #[test]
     fn sector_cipher_roundtrip() {
         let cipher = SectorCipher::new([0x11; 16], [0x22; 16]);
+        let plain = sample_sector();
+        let off = 0x0211_0800u64;
+        let ct = cipher.encrypt_sector(&plain, off);
+        assert_ne!(ct, plain);
+        assert_eq!(cipher.decrypt_sector(&ct, off), plain);
+    }
+
+    #[test]
+    fn sector_cipher_cbc_roundtrip() {
+        // Method 0x8002: AES-128-CBC only, no diffuser, no tweak (Tier-3
+        // self-consistency; oracle_bitlocker1.rs is the Tier-1 proof).
+        let cipher = SectorCipher::new_cbc([0x13; 16]);
         let plain = sample_sector();
         let off = 0x0211_0800u64;
         let ct = cipher.encrypt_sector(&plain, off);

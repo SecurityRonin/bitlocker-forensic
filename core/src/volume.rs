@@ -13,8 +13,10 @@ use crate::error::{BdeError, Result};
 use crate::header::VolumeHeader;
 use crate::metadata::{FveMetadata, PROTECTION_PASSWORD, VALUE_TYPE_AES_CCM, VALUE_TYPE_STRETCH};
 
-/// Encryption method decrypted by this build: AES-128-CBC + Elephant Diffuser.
+/// Encryption method: AES-128-CBC + Elephant Diffuser.
 const METHOD_AES128_CBC_DIFFUSER: u16 = 0x8000;
+/// Encryption method: AES-128-CBC, no diffuser.
+const METHOD_AES128_CBC: u16 = 0x8002;
 /// Encryption method sentinel: the volume is not encrypted.
 const METHOD_NONE: u16 = 0x0000;
 /// The fixed BitLocker sector size.
@@ -69,7 +71,10 @@ impl BitLockerVolume {
     ) -> Result<DecryptedVolume<R>> {
         let metadata = Self::read_metadata(&mut reader)?;
 
-        if metadata.encryption_method != METHOD_AES128_CBC_DIFFUSER {
+        if !matches!(
+            metadata.encryption_method,
+            METHOD_AES128_CBC_DIFFUSER | METHOD_AES128_CBC
+        ) {
             return Err(BdeError::UnsupportedEncryptionMethod {
                 method: metadata.encryption_method,
             });
@@ -131,16 +136,21 @@ fn derive_cipher(metadata: &FveMetadata, password: &str) -> Result<SectorCipher>
         })?;
     let vmk_key = take_key32(&vmk_container, 12, "volume master key")?;
 
-    // 3. FVEK entry -> unwrap with the VMK -> FVEK + TWEAK (first 16 bytes each).
+    // 3. FVEK entry -> unwrap with the VMK -> FVEK (first 16 bytes). Method
+    //    0x8000 additionally carries a 16-byte TWEAK key; 0x8002 does not.
     let fvek_entry = metadata
         .fvek_entry()
         .ok_or(BdeError::MissingKeyMaterial { what: "FVEK entry" })?;
     let fvek_container = aes_ccm_unwrap(&vmk_key, &fvek_entry.data)
         .ok_or(BdeError::AuthenticationFailed { what: "FVEK" })?;
     let fvek = take_key16(&fvek_container, 12, "FVEK")?;
-    let tweak = take_key16(&fvek_container, 44, "FVEK")?;
 
-    Ok(SectorCipher::new(fvek, tweak))
+    if metadata.encryption_method == METHOD_AES128_CBC_DIFFUSER {
+        let tweak = take_key16(&fvek_container, 44, "FVEK")?;
+        Ok(SectorCipher::new(fvek, tweak))
+    } else {
+        Ok(SectorCipher::new_cbc(fvek))
+    }
 }
 
 fn take_key32(container: &[u8], off: usize, what: &'static str) -> Result<[u8; 32]> {
