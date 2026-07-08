@@ -24,6 +24,10 @@ aes  = "0.8"
 cbc  = "0.1"
 ccm  = "0.5"
 sha2 = "0.10"
+# The one exception (no ecosystem crate exists): our own Elephant Diffuser,
+# extracted from this repo's crypto layer and validated in situ by the Tier-1
+# oracle. Path dep during dev; the registry version is used for publish.
+elephant-diffuser = { version = "0.1", path = "../elephant-diffuser" }
 # REUSE, don't reinvent calendar math: jiff renders FILETIME as RFC 3339.
 jiff = "0.2"
 bitlocker = { version = "0.2", path = "core", package = "bitlocker-core" }

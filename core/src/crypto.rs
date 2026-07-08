@@ -1,11 +1,11 @@
-//! BitLocker cryptography: password-key derivation, AES-CCM key unwrap, the
-//! Elephant Diffuser, and AES-CBC sector decryption.
+//! BitLocker cryptography: password-key derivation, AES-CCM key unwrap, and
+//! AES-CBC sector decryption (with or without the Elephant Diffuser stage).
 //!
 //! Every primitive comes from an audited RustCrypto crate — `aes`, `cbc`, `ccm`,
-//! `sha2`. The one exception is the **Elephant Diffuser**, for which no crate
-//! exists: it is implemented to the `dislocker`/`libbde` reference and validated
-//! **only** against the Tier-1 `pybde` oracle (a self-authored round-trip proves
-//! nothing — see `docs/validation.md`).
+//! `sha2`. The one exception, the **Elephant Diffuser** (no ecosystem crate
+//! exists), lives in our own [`elephant_diffuser`] crate — extracted from here
+//! and validated **in situ** by the Tier-1 `pybde` oracle (a self-authored
+//! round-trip proves nothing — see `docs/validation.md`).
 
 use aes::cipher::block_padding::NoPadding;
 use aes::cipher::{BlockDecryptMut, BlockEncrypt, KeyInit, KeyIvInit};
@@ -98,98 +98,6 @@ pub fn aes_ccm_wrap(key: &[u8; 32], nonce: &[u8; 12], plaintext: &[u8]) -> Vec<u
     out
 }
 
-/// A word-count helper for the diffuser (bytes → 32-bit words).
-fn to_words(sector: &[u8]) -> Vec<u32> {
-    sector
-        .chunks_exact(4)
-        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
-}
-
-fn from_words(words: &[u32], out: &mut [u8]) {
-    for (i, w) in words.iter().enumerate() {
-        if let Some(slot) = out.get_mut(i * 4..i * 4 + 4) {
-            slot.copy_from_slice(&w.to_le_bytes());
-        }
-    }
-}
-
-const RA: [u32; 4] = [9, 0, 13, 0];
-const RB: [u32; 4] = [0, 10, 0, 25];
-
-/// Elephant Diffuser A (decryption direction): `d[i] += d[i-2] ^ ROL(d[i-5],
-/// Ra[i%4])`, 5 cycles, indices ascending, mod word count.
-pub fn diffuser_a_decrypt(sector: &mut [u8]) {
-    let mut d = to_words(sector);
-    let n = d.len();
-    if n == 0 {
-        return;
-    }
-    for _ in 0..5 {
-        for i in 0..n {
-            let a = d[(i + n - 2) % n];
-            let b = d[(i + n - 5) % n].rotate_left(RA[i % 4]);
-            d[i] = d[i].wrapping_add(a ^ b);
-        }
-    }
-    from_words(&d, sector);
-}
-
-/// Elephant Diffuser B (decryption direction): `d[i] += d[i+2] ^ ROL(d[i+5],
-/// Rb[i%4])`, 3 cycles, indices ascending, mod word count.
-pub fn diffuser_b_decrypt(sector: &mut [u8]) {
-    let mut d = to_words(sector);
-    let n = d.len();
-    if n == 0 {
-        return;
-    }
-    for _ in 0..3 {
-        for i in 0..n {
-            let a = d[(i + 2) % n];
-            let b = d[(i + 5) % n].rotate_left(RB[i % 4]);
-            d[i] = d[i].wrapping_add(a ^ b);
-        }
-    }
-    from_words(&d, sector);
-}
-
-/// Elephant Diffuser A (encryption direction) — inverse of [`diffuser_a_decrypt`],
-/// used only by the round-trip self-consistency test.
-#[cfg(test)]
-pub fn diffuser_a_encrypt(sector: &mut [u8]) {
-    let mut d = to_words(sector);
-    let n = d.len();
-    if n == 0 {
-        return;
-    }
-    for _ in 0..5 {
-        for i in (0..n).rev() {
-            let a = d[(i + n - 2) % n];
-            let b = d[(i + n - 5) % n].rotate_left(RA[i % 4]);
-            d[i] = d[i].wrapping_sub(a ^ b);
-        }
-    }
-    from_words(&d, sector);
-}
-
-/// Elephant Diffuser B (encryption direction) — inverse of [`diffuser_b_decrypt`].
-#[cfg(test)]
-pub fn diffuser_b_encrypt(sector: &mut [u8]) {
-    let mut d = to_words(sector);
-    let n = d.len();
-    if n == 0 {
-        return;
-    }
-    for _ in 0..3 {
-        for i in (0..n).rev() {
-            let a = d[(i + 2) % n];
-            let b = d[(i + 5) % n].rotate_left(RB[i % 4]);
-            d[i] = d[i].wrapping_sub(a ^ b);
-        }
-    }
-    from_words(&d, sector);
-}
-
 /// The volume sector cipher. Both supported methods (0x8000 and 0x8002) share
 /// the FVEK-keyed AES-128-CBC core; the presence of the TWEAK key is the mode
 /// discriminant — `Some` applies the Elephant Diffuser (method 0x8000), `None`
@@ -268,15 +176,12 @@ impl SectorCipher {
         match dec.decrypt_padded_mut::<NoPadding>(&mut buf[..len]) {
             Ok(plain) => {
                 let plain_len = plain.len();
-                // Method 0x8000 only: Diffuser B then A, then XOR the sector key.
-                // Method 0x8002 stops at the CBC plaintext above.
+                // Method 0x8000 only: the Elephant Diffuser stage (Diffuser B,
+                // then A, then XOR the sector key). Method 0x8002 stops at the
+                // CBC plaintext above.
                 if let Some(tweak) = &self.tweak {
                     let sector_key = Self::sector_key(tweak, byte_offset);
-                    diffuser_b_decrypt(&mut buf[..plain_len]);
-                    diffuser_a_decrypt(&mut buf[..plain_len]);
-                    for (i, b) in buf[..plain_len].iter_mut().enumerate() {
-                        *b ^= sector_key[i % 32];
-                    }
+                    elephant_diffuser::decrypt(&mut buf[..plain_len], &sector_key);
                 }
             }
             // `len` is a 16-byte multiple, so NoPadding CBC decryption cannot
@@ -296,11 +201,7 @@ impl SectorCipher {
         let mut buf = plain.to_vec();
         if let Some(tweak) = &self.tweak {
             let sector_key = Self::sector_key(tweak, byte_offset);
-            for (i, b) in buf.iter_mut().enumerate() {
-                *b ^= sector_key[i % 32];
-            }
-            diffuser_a_encrypt(&mut buf);
-            diffuser_b_encrypt(&mut buf);
+            elephant_diffuser::encrypt(&mut buf, &sector_key);
         }
         let enc = cbc::Encryptor::<Aes128>::new(
             GenericArray::from_slice(&self.fvek),
@@ -350,38 +251,6 @@ mod tests {
         (0..512u32)
             .map(|i| (i.wrapping_mul(31) ^ 0xA5) as u8)
             .collect()
-    }
-
-    #[test]
-    fn diffuser_a_roundtrip() {
-        let orig = sample_sector();
-        let mut buf = orig.clone();
-        diffuser_a_encrypt(&mut buf);
-        assert_ne!(buf, orig);
-        diffuser_a_decrypt(&mut buf);
-        assert_eq!(buf, orig);
-    }
-
-    #[test]
-    fn diffuser_b_roundtrip() {
-        let orig = sample_sector();
-        let mut buf = orig.clone();
-        diffuser_b_encrypt(&mut buf);
-        assert_ne!(buf, orig);
-        diffuser_b_decrypt(&mut buf);
-        assert_eq!(buf, orig);
-    }
-
-    #[test]
-    fn diffuser_empty_and_short_no_panic() {
-        let mut empty: [u8; 0] = [];
-        diffuser_a_decrypt(&mut empty);
-        diffuser_b_decrypt(&mut empty);
-        diffuser_a_encrypt(&mut empty);
-        diffuser_b_encrypt(&mut empty);
-        let mut three = [1u8, 2, 3];
-        diffuser_a_decrypt(&mut three); // < 1 word after chunks_exact -> no-op
-        diffuser_b_encrypt(&mut three);
     }
 
     #[test]

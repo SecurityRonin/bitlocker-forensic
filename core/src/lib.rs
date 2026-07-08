@@ -14,9 +14,10 @@
 //! their presence.
 //!
 //! Every primitive comes from an audited RustCrypto crate — `aes`, `cbc`, `ccm`,
-//! `sha2` — except the Elephant Diffuser, for which no crate exists; it is
-//! implemented to the `libbde` reference and validated **only** against the
-//! Tier-1 oracle (never a self-authored round-trip, which would prove nothing).
+//! `sha2` — except the Elephant Diffuser, for which no ecosystem crate exists;
+//! it lives in our own [`elephant_diffuser`] crate (extracted from here) and is
+//! validated **in situ** by this repo's Tier-1 oracle (never a self-authored
+//! round-trip, which would prove nothing).
 //!
 //! ```no_run
 //! use std::fs::File;
