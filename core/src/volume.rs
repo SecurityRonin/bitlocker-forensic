@@ -36,8 +36,25 @@ impl BitLockerVolume {
     /// [`BdeError::NotBitLocker`] if the header signature is absent, or
     /// [`BdeError::NoValidMetadata`] if no `-FVE-FS-` block is found.
     pub fn read_metadata<R: Read + Seek>(reader: &mut R) -> Result<FveMetadata> {
-        let _ = ();
-        unimplemented!("RED stub");
+        let mut header = [0u8; SECTOR_SIZE];
+        reader.seek(SeekFrom::Start(0))?;
+        read_fill(reader, &mut header)?;
+        let volume_header = VolumeHeader::parse(&header)?;
+
+        let offsets = volume_header.fve_metadata_offsets;
+        for &offset in &offsets {
+            if offset == 0 {
+                continue;
+            }
+            let mut block = vec![0u8; METADATA_READ_LEN];
+            reader.seek(SeekFrom::Start(offset))?;
+            let n = read_available(reader, &mut block)?;
+            block.truncate(n);
+            if let Some(meta) = FveMetadata::parse(&block, volume_header.bytes_per_sector) {
+                return Ok(meta);
+            }
+        }
+        Err(BdeError::NoValidMetadata { offsets })
     }
 
     /// Unlock the volume with `password`, returning a plaintext view.
@@ -50,8 +67,24 @@ impl BitLockerVolume {
         mut reader: R,
         password: &str,
     ) -> Result<DecryptedVolume<R>> {
-        let _ = ();
-        unimplemented!("RED stub");
+        let metadata = Self::read_metadata(&mut reader)?;
+
+        if metadata.encryption_method != METHOD_AES128_CBC_DIFFUSER {
+            return Err(BdeError::UnsupportedEncryptionMethod {
+                method: metadata.encryption_method,
+            });
+        }
+
+        let cipher = derive_cipher(&metadata, password)?;
+        let total_size = reader.seek(SeekFrom::End(0))?;
+
+        Ok(DecryptedVolume {
+            reader,
+            cipher,
+            metadata,
+            total_size,
+            position: 0,
+        })
     }
 }
 
