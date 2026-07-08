@@ -35,7 +35,9 @@ mod bytes;
 mod error;
 mod guid;
 mod header;
+mod metadata;
 
 pub use error::{BdeError, Result};
 pub use guid::format_guid;
 pub use header::{BdeVariant, VolumeHeader};
+pub use metadata::{FveMetadata, MetadataEntry};
