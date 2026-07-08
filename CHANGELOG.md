@@ -13,8 +13,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `bitlocker-core`: sector decryption for **AES-128-CBC without the Elephant
   Diffuser** (method `0x8002`) — the FVEK-keyed CBC core with no diffuser stage
   and no TWEAK key. Tier-1 validated against `pybde` on the picoCTF 2025
-  `bitlocker-1.dd` image. Methods `0x8000` and `0x8002` are now both decrypted;
-  AES-256-CBC (`0x8003`) and AES-XTS (`0x8004`/`0x8005`) remain out of scope.
+  `bitlocker-1.dd` image. Methods `0x8000` and `0x8002` are now both decrypted.
+- `bitlocker-core`: the encryption-method dispatch now **decodes all six
+  ciphers** (`0x8000`–`0x8005`) into their three axes — key size, CBC/XTS mode,
+  and diffuser. The two oracle-validated ciphers are decrypted; the recognized
+  but unvalidated ones (`0x8001` CBC-256+diffuser, `0x8003` CBC-256, `0x8004`
+  XTS-128, `0x8005` XTS-256) are **refused with a named
+  `UnvalidatedEncryptionMethod` error** rather than decrypted by construction. A
+  value outside the range stays `UnsupportedEncryptionMethod`.
 
 ## [0.1.0]
 

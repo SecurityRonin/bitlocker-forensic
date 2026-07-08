@@ -43,9 +43,13 @@ ciphers, each validated by a **Tier-1 oracle**:
 | `0x8000` | AES-128-CBC + Elephant Diffuser | dfvfs `bdetogo.raw` (`pybde`) |
 | `0x8002` | AES-128-CBC (no diffuser) | picoCTF 2025 `bitlocker-1.dd` (`pybde`) |
 
-AES-256-CBC (`0x8003`), AES-XTS (`0x8004`/`0x8005`), and recovery-password,
-startup-key, and TPM protectors are deliberately out of scope for *unlock* — but
-the metadata parser still **reports** every protector and cipher it finds. See
+The dispatch decodes all six ciphers (`0x8000`–`0x8005`) into their axes, but
+only ships a decrypt for a cipher once a real oracle validates it. AES-256-CBC
+(`0x8001`/`0x8003`) and AES-XTS (`0x8004`/`0x8005`) are **recognized and refused
+with a named error** — never decrypted by construction — so they light up as a
+one-line change plus a test the moment each gets an oracle. Recovery-password,
+startup-key, and TPM protectors are likewise out of scope for *unlock*, but the
+metadata parser still **reports** every protector and cipher it finds. See
 [`docs/RESEARCH.md`](docs/RESEARCH.md).
 
 ## The two-crate split
