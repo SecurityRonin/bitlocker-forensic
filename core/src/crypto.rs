@@ -381,4 +381,16 @@ mod tests {
         assert_ne!(ct, plain);
         assert_eq!(cipher.decrypt_sector(&ct, off), plain);
     }
+
+    #[test]
+    fn sector_cipher_cbc256_roundtrip() {
+        // Method 0x8003: AES-256-CBC only, no diffuser, no tweak (Tier-3
+        // self-consistency; oracle_m8003.rs is the Tier-2 proof).
+        let cipher = SectorCipher::new_cbc256([0x24; 32]);
+        let plain = sample_sector();
+        let off = 0x0211_0800u64;
+        let ct = cipher.encrypt_sector(&plain, off);
+        assert_ne!(ct, plain);
+        assert_eq!(cipher.decrypt_sector(&ct, off), plain);
+    }
 }
