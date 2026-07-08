@@ -38,6 +38,7 @@ mod error;
 mod guid;
 mod header;
 mod metadata;
+mod method;
 mod volume;
 
 pub use error::{BdeError, Result};

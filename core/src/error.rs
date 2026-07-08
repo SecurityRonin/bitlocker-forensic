@@ -30,10 +30,20 @@ pub enum BdeError {
         offsets: [u64; 3],
     },
 
-    /// The volume's encryption method is not one this build decrypts. The raw
-    /// method value is included.
-    #[error("unsupported encryption method 0x{method:04x} (this build decrypts 0x8000 AES-128-CBC + Elephant Diffuser and 0x8002 AES-128-CBC)")]
+    /// The encryption-method value is not one of the six defined BitLocker
+    /// ciphers (`0x8000`–`0x8005`). The raw value is included.
+    #[error("unsupported encryption method 0x{method:04x} (not a recognized BitLocker cipher; this build decrypts 0x8000 AES-128-CBC + Elephant Diffuser and 0x8002 AES-128-CBC)")]
     UnsupportedEncryptionMethod {
+        /// The raw 16-bit encryption-method value from the metadata header.
+        method: u16,
+    },
+
+    /// The encryption method is a recognized BitLocker cipher but this build has
+    /// no oracle-validated decrypt for it yet (AES-256-CBC `0x8003`, or AES-XTS
+    /// `0x8004`/`0x8005`, or AES-256-CBC + diffuser `0x8001`). It is refused
+    /// rather than decrypted by construction. The raw value is named.
+    #[error("recognized but unvalidated encryption method 0x{method:04x} (no oracle yet; this build decrypts only 0x8000 and 0x8002)")]
+    UnvalidatedEncryptionMethod {
         /// The raw 16-bit encryption-method value from the metadata header.
         method: u16,
     },

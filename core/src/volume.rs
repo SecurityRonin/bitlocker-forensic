@@ -12,11 +12,8 @@ use crate::crypto::{aes_ccm_unwrap, password_hash, stretch_key, SectorCipher};
 use crate::error::{BdeError, Result};
 use crate::header::VolumeHeader;
 use crate::metadata::{FveMetadata, PROTECTION_PASSWORD, VALUE_TYPE_AES_CCM, VALUE_TYPE_STRETCH};
+use crate::method::{EncryptionMethod, SectorCipherKind};
 
-/// Encryption method: AES-128-CBC + Elephant Diffuser.
-const METHOD_AES128_CBC_DIFFUSER: u16 = 0x8000;
-/// Encryption method: AES-128-CBC, no diffuser.
-const METHOD_AES128_CBC: u16 = 0x8002;
 /// Encryption method sentinel: the volume is not encrypted.
 const METHOD_NONE: u16 = 0x0000;
 /// The fixed BitLocker sector size.
@@ -71,16 +68,17 @@ impl BitLockerVolume {
     ) -> Result<DecryptedVolume<R>> {
         let metadata = Self::read_metadata(&mut reader)?;
 
-        if !matches!(
-            metadata.encryption_method,
-            METHOD_AES128_CBC_DIFFUSER | METHOD_AES128_CBC
-        ) {
-            return Err(BdeError::UnsupportedEncryptionMethod {
-                method: metadata.encryption_method,
-            });
-        }
+        // Decode the method into its three axes, then gate on whether we have an
+        // oracle-validated decrypt for it: unrecognized ⇒ Unsupported; recognized
+        // but no oracle (0x8001/0x8003/0x8004/0x8005) ⇒ Unvalidated (refuse, never
+        // decrypt by construction); validated ⇒ build the sector cipher.
+        let raw = metadata.encryption_method;
+        let kind = EncryptionMethod::decode(raw)
+            .ok_or(BdeError::UnsupportedEncryptionMethod { method: raw })?
+            .validated_kind()
+            .ok_or(BdeError::UnvalidatedEncryptionMethod { method: raw })?;
 
-        let cipher = derive_cipher(&metadata, password)?;
+        let cipher = derive_cipher(&metadata, kind, password)?;
         let total_size = reader.seek(SeekFrom::End(0))?;
 
         Ok(DecryptedVolume {
@@ -93,8 +91,13 @@ impl BitLockerVolume {
     }
 }
 
-/// Derive the sector cipher (FVEK + TWEAK) from the password-protected VMK.
-fn derive_cipher(metadata: &FveMetadata, password: &str) -> Result<SectorCipher> {
+/// Derive the sector cipher from the password-protected VMK, building the
+/// transform for the already-validated `kind`.
+fn derive_cipher(
+    metadata: &FveMetadata,
+    kind: SectorCipherKind,
+    password: &str,
+) -> Result<SectorCipher> {
     // 1. Locate the password-protected VMK.
     let vmk = metadata
         .vmk_entries()
@@ -136,8 +139,8 @@ fn derive_cipher(metadata: &FveMetadata, password: &str) -> Result<SectorCipher>
         })?;
     let vmk_key = take_key32(&vmk_container, 12, "volume master key")?;
 
-    // 3. FVEK entry -> unwrap with the VMK -> FVEK (first 16 bytes). Method
-    //    0x8000 additionally carries a 16-byte TWEAK key; 0x8002 does not.
+    // 3. FVEK entry -> unwrap with the VMK -> FVEK (first 16 bytes). The
+    //    diffuser kind additionally carries a 16-byte TWEAK key at offset 44.
     let fvek_entry = metadata
         .fvek_entry()
         .ok_or(BdeError::MissingKeyMaterial { what: "FVEK entry" })?;
@@ -145,11 +148,12 @@ fn derive_cipher(metadata: &FveMetadata, password: &str) -> Result<SectorCipher>
         .ok_or(BdeError::AuthenticationFailed { what: "FVEK" })?;
     let fvek = take_key16(&fvek_container, 12, "FVEK")?;
 
-    if metadata.encryption_method == METHOD_AES128_CBC_DIFFUSER {
-        let tweak = take_key16(&fvek_container, 44, "FVEK")?;
-        Ok(SectorCipher::new(fvek, tweak))
-    } else {
-        Ok(SectorCipher::new_cbc(fvek))
+    match kind {
+        SectorCipherKind::Cbc128Diffuser => {
+            let tweak = take_key16(&fvek_container, 44, "FVEK")?;
+            Ok(SectorCipher::new(fvek, tweak))
+        }
+        SectorCipherKind::Cbc128 => Ok(SectorCipher::new_cbc(fvek)),
     }
 }
 
