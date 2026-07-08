@@ -598,12 +598,29 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_method_errors() {
-        let img = meta_only_image(0x8004, &[0x2000], [0x1000, 0, 0], Some(0x1000));
+    fn recognized_but_unvalidated_methods_refuse() {
+        // 0x8001 CBC-256+diffuser, 0x8003 CBC-256, 0x8004 XTS-128, 0x8005
+        // XTS-256 are recognized by the dispatch but have no Tier-1/2 oracle
+        // yet — they must refuse (naming the method), never by-construction
+        // decrypt. The refusal is gated before key derivation.
+        for m in [0x8001u16, 0x8003, 0x8004, 0x8005] {
+            let img = meta_only_image(m, &[0x2000], [0x1000, 0, 0], Some(0x1000));
+            let res = BitLockerVolume::unlock_with_password(Cursor::new(img), "x");
+            assert!(
+                matches!(res, Err(BdeError::UnvalidatedEncryptionMethod { method }) if method == m),
+                "method {m:#06x} must be recognized-but-unvalidated"
+            );
+        }
+    }
+
+    #[test]
+    fn unrecognized_method_errors() {
+        // Not a 0x800x BDE cipher at all — a distinct "unsupported" error.
+        let img = meta_only_image(0x1234, &[0x2000], [0x1000, 0, 0], Some(0x1000));
         let res = BitLockerVolume::unlock_with_password(Cursor::new(img), "x");
         assert!(matches!(
             res,
-            Err(BdeError::UnsupportedEncryptionMethod { method: 0x8004 })
+            Err(BdeError::UnsupportedEncryptionMethod { method: 0x1234 })
         ));
     }
 
