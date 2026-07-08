@@ -28,18 +28,30 @@ type BdeCcm = Ccm<aes::Aes256, U16, U12>;
 /// with no byte-order mark and no NUL terminator.
 #[must_use]
 pub fn password_hash(password: &str) -> [u8; 32] {
-        let _ = ();
-        unimplemented!("RED stub");
-    }
+    let utf16: Vec<u8> = password.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let first = Sha256::digest(&utf16);
+    let second = Sha256::digest(first);
+    second.into()
+}
 
 /// Run the BDE key-stretch loop `iterations` times and return the final 32-byte
 /// key. The hashed structure is `last[32] | initial[32] | salt[16] | count(u64
 /// LE)`; each round hashes it into `last` and increments `count`.
 #[must_use]
 pub fn stretch_key_n(password_hash: &[u8; 32], salt: &[u8; 16], iterations: u64) -> [u8; 32] {
-        let _ = ();
-        unimplemented!("RED stub");
+    let mut buf = [0u8; 88];
+    // buf[0..32] = last (starts zero); buf[32..64] = initial; buf[64..80] = salt.
+    buf[32..64].copy_from_slice(password_hash);
+    buf[64..80].copy_from_slice(salt);
+    for count in 0..iterations {
+        buf[80..88].copy_from_slice(&count.to_le_bytes());
+        let digest = Sha256::digest(buf);
+        buf[0..32].copy_from_slice(&digest);
     }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&buf[0..32]);
+    out
+}
 
 /// The full BitLocker password stretch (`0x100000` iterations).
 #[must_use]
@@ -53,9 +65,20 @@ pub fn stretch_key(password_hash: &[u8; 32], salt: &[u8; 16]) -> [u8; 32] {
 /// on success, or `None` when the authentication tag does not verify (wrong key).
 #[must_use]
 pub fn aes_ccm_unwrap(key: &[u8; 32], value_data: &[u8]) -> Option<Vec<u8>> {
-        let _ = ();
-        unimplemented!("RED stub");
-    }
+    let nonce = value_data.get(0..12)?;
+    let tag = value_data.get(12..28)?;
+    let mut buffer = value_data.get(28..)?.to_vec();
+    let cipher = <BdeCcm as CcmKeyInit>::new(GenericArray::from_slice(key));
+    cipher
+        .decrypt_in_place_detached(
+            GenericArray::from_slice(nonce),
+            &[],
+            &mut buffer,
+            GenericArray::from_slice(tag),
+        )
+        .ok()?;
+    Some(buffer)
+}
 
 /// A word-count helper for the diffuser (bytes → 32-bit words).
 fn to_words(sector: &[u8]) -> Vec<u32> {
@@ -79,29 +102,73 @@ const RB: [u32; 4] = [0, 10, 0, 25];
 /// Elephant Diffuser A (decryption direction): `d[i] += d[i-2] ^ ROL(d[i-5],
 /// Ra[i%4])`, 5 cycles, indices ascending, mod word count.
 pub fn diffuser_a_decrypt(sector: &mut [u8]) {
-        let _ = ();
-        unimplemented!("RED stub");
+    let mut d = to_words(sector);
+    let n = d.len();
+    if n == 0 {
+        return;
     }
+    for _ in 0..5 {
+        for i in 0..n {
+            let a = d[(i + n - 2) % n];
+            let b = d[(i + n - 5) % n].rotate_left(RA[i % 4]);
+            d[i] = d[i].wrapping_add(a ^ b);
+        }
+    }
+    from_words(&d, sector);
+}
 
 /// Elephant Diffuser B (decryption direction): `d[i] += d[i+2] ^ ROL(d[i+5],
 /// Rb[i%4])`, 3 cycles, indices ascending, mod word count.
 pub fn diffuser_b_decrypt(sector: &mut [u8]) {
-        let _ = ();
-        unimplemented!("RED stub");
+    let mut d = to_words(sector);
+    let n = d.len();
+    if n == 0 {
+        return;
     }
+    for _ in 0..3 {
+        for i in 0..n {
+            let a = d[(i + 2) % n];
+            let b = d[(i + 5) % n].rotate_left(RB[i % 4]);
+            d[i] = d[i].wrapping_add(a ^ b);
+        }
+    }
+    from_words(&d, sector);
+}
 
 /// Elephant Diffuser A (encryption direction) — inverse of [`diffuser_a_decrypt`],
 /// used only by the round-trip self-consistency test.
 pub fn diffuser_a_encrypt(sector: &mut [u8]) {
-        let _ = ();
-        unimplemented!("RED stub");
+    let mut d = to_words(sector);
+    let n = d.len();
+    if n == 0 {
+        return;
     }
+    for _ in 0..5 {
+        for i in (0..n).rev() {
+            let a = d[(i + n - 2) % n];
+            let b = d[(i + n - 5) % n].rotate_left(RA[i % 4]);
+            d[i] = d[i].wrapping_sub(a ^ b);
+        }
+    }
+    from_words(&d, sector);
+}
 
 /// Elephant Diffuser B (encryption direction) — inverse of [`diffuser_b_decrypt`].
 pub fn diffuser_b_encrypt(sector: &mut [u8]) {
-        let _ = ();
-        unimplemented!("RED stub");
+    let mut d = to_words(sector);
+    let n = d.len();
+    if n == 0 {
+        return;
     }
+    for _ in 0..3 {
+        for i in (0..n).rev() {
+            let a = d[(i + 2) % n];
+            let b = d[(i + 5) % n].rotate_left(RB[i % 4]);
+            d[i] = d[i].wrapping_sub(a ^ b);
+        }
+    }
+    from_words(&d, sector);
+}
 
 /// The volume sector cipher for method 0x8000 (AES-128-CBC + Elephant Diffuser).
 /// Holds the 16-byte FVEK and TWEAK keys derived from the FVEK entry.
