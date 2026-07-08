@@ -49,19 +49,6 @@ pub(crate) fn slice_owned(b: &[u8], off: usize, len: usize) -> Vec<u8> {
     b.get(off..end).map(<[u8]>::to_vec).unwrap_or_default()
 }
 
-/// Decode a UTF-16LE byte run into a `String`, substituting U+FFFD for any
-/// unpaired surrogate and stopping at the first NUL. A trailing odd byte is
-/// ignored.
-pub(crate) fn utf16le_string(b: &[u8]) -> String {
-    let units = b
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .take_while(|&u| u != 0);
-    char::decode_utf16(units)
-        .map(|r| r.unwrap_or('\u{FFFD}'))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,18 +83,5 @@ mod tests {
         assert_eq!(slice_owned(&b, 1, 2), vec![2, 3]);
         assert_eq!(slice_owned(&b, 2, 100), vec![3, 4]);
         assert!(slice_owned(&b, 100, 4).is_empty());
-    }
-
-    #[test]
-    fn utf16le_stops_at_nul_and_handles_odd_tail() {
-        // "Hi" then NUL then junk, plus a trailing odd byte.
-        let b = [b'H', 0, b'i', 0, 0, 0, b'X', 0, 9];
-        assert_eq!(utf16le_string(&b), "Hi");
-    }
-
-    #[test]
-    fn utf16le_replaces_unpaired_surrogate() {
-        let b = [0x00, 0xD8]; // lone high surrogate
-        assert_eq!(utf16le_string(&b), "\u{FFFD}");
     }
 }

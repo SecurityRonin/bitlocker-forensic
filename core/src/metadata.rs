@@ -21,8 +21,6 @@ pub const ENTRY_TYPE_VOLUME_HEADER: u16 = 0x000f;
 pub const VALUE_TYPE_AES_CCM: u16 = 0x0005;
 /// Value type: a stretch key (salt + nested AES-CCM key).
 pub const VALUE_TYPE_STRETCH: u16 = 0x0003;
-/// Value type: a raw key (encryption method + key data).
-pub const VALUE_TYPE_KEY: u16 = 0x0001;
 /// Value type: a Volume Master Key protector.
 pub const VALUE_TYPE_VMK: u16 = 0x0008;
 

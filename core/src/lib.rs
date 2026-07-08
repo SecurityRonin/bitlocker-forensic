@@ -16,9 +16,8 @@
 //! implemented to the `libbde` reference and validated **only** against the
 //! Tier-1 oracle (never a self-authored round-trip, which would prove nothing).
 //!
-//! ```ignore
+//! ```no_run
 //! use std::fs::File;
-//! use std::io::Read;
 //! use bitlocker::BitLockerVolume;
 //!
 //! let image = File::open("bdetogo.raw")?;
@@ -37,8 +36,10 @@ mod error;
 mod guid;
 mod header;
 mod metadata;
+mod volume;
 
 pub use error::{BdeError, Result};
 pub use guid::format_guid;
 pub use header::{BdeVariant, VolumeHeader};
 pub use metadata::{FveMetadata, MetadataEntry};
+pub use volume::{BitLockerVolume, DecryptedVolume};

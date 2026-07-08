@@ -80,6 +80,24 @@ pub fn aes_ccm_unwrap(key: &[u8; 32], value_data: &[u8]) -> Option<Vec<u8>> {
     Some(buffer)
 }
 
+/// Wrap `plaintext` into the BitLocker on-disk AES-CCM key layout
+/// (`nonce(12) | MAC(16) | ciphertext`) — the inverse of [`aes_ccm_unwrap`], used
+/// only to build synthetic volumes in tests.
+#[cfg(test)]
+#[must_use]
+pub fn aes_ccm_wrap(key: &[u8; 32], nonce: &[u8; 12], plaintext: &[u8]) -> Vec<u8> {
+    let cipher = <BdeCcm as CcmKeyInit>::new(GenericArray::from_slice(key));
+    let mut buffer = plaintext.to_vec();
+    let tag = cipher
+        .encrypt_in_place_detached(GenericArray::from_slice(nonce), &[], &mut buffer)
+        .unwrap();
+    let mut out = Vec::with_capacity(12 + 16 + buffer.len());
+    out.extend_from_slice(nonce);
+    out.extend_from_slice(&tag);
+    out.extend_from_slice(&buffer);
+    out
+}
+
 /// A word-count helper for the diffuser (bytes → 32-bit words).
 fn to_words(sector: &[u8]) -> Vec<u32> {
     sector
@@ -137,6 +155,7 @@ pub fn diffuser_b_decrypt(sector: &mut [u8]) {
 
 /// Elephant Diffuser A (encryption direction) — inverse of [`diffuser_a_decrypt`],
 /// used only by the round-trip self-consistency test.
+#[cfg(test)]
 pub fn diffuser_a_encrypt(sector: &mut [u8]) {
     let mut d = to_words(sector);
     let n = d.len();
@@ -154,6 +173,7 @@ pub fn diffuser_a_encrypt(sector: &mut [u8]) {
 }
 
 /// Elephant Diffuser B (encryption direction) — inverse of [`diffuser_b_decrypt`].
+#[cfg(test)]
 pub fn diffuser_b_encrypt(sector: &mut [u8]) {
     let mut d = to_words(sector);
     let n = d.len();
