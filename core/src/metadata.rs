@@ -54,8 +54,22 @@ impl MetadataEntry {
     /// never looping forever on a lying size.
     #[must_use]
     pub fn parse_sequence(data: &[u8]) -> Vec<MetadataEntry> {
-        let _ = data;
-        unimplemented!("MetadataEntry::parse_sequence") // RED stub
+        let mut out = Vec::new();
+        let mut pos = 0usize;
+        while pos + 8 <= data.len() {
+            let size = le_u16(data, pos) as usize;
+            if size < 8 || pos + size > data.len() {
+                break;
+            }
+            out.push(MetadataEntry {
+                entry_type: le_u16(data, pos + 2),
+                value_type: le_u16(data, pos + 4),
+                version: le_u16(data, pos + 6),
+                data: slice_owned(data, pos + 8, size - 8),
+            });
+            pos += size;
+        }
+        out
     }
 
     /// Parse this entry's value data (from `offset`) as a nested entry sequence.
@@ -112,8 +126,61 @@ impl FveMetadata {
     /// the caller can try the next candidate block offset.
     #[must_use]
     pub fn parse(block: &[u8], bytes_per_sector: u16) -> Option<FveMetadata> {
-        let _ = (block, bytes_per_sector);
-        unimplemented!("FveMetadata::parse") // RED stub
+        if block.get(0..8) != Some(FVE_SIGNATURE.as_slice()) {
+            return None;
+        }
+
+        let encrypted_volume_size = le_u64(block, 16);
+        let num_volume_header_sectors = le_u32(block, 28);
+        let metadata_offsets = [le_u64(block, 32), le_u64(block, 40), le_u64(block, 48)];
+        let block_volume_header_offset = le_u64(block, 56);
+
+        // FVE metadata header starts at block offset 64.
+        let mh = 64usize;
+        let metadata_size = le_u32(block, mh);
+        let volume_guid = read_guid(block, mh + 16);
+        let encryption_method = le_u16(block, mh + 36);
+        let creation_time = le_u64(block, mh + 40);
+
+        // Entries follow the 48-byte metadata header, bounded by metadata_size.
+        let entries_start = mh + 48;
+        let entries_end = (mh + metadata_size as usize).min(block.len());
+        let entries = if entries_end > entries_start {
+            MetadataEntry::parse_sequence(&block[entries_start..entries_end])
+        } else {
+            Vec::new()
+        };
+
+        // Resolve the relocated volume-header region: prefer the dedicated
+        // volume-header-block entry (type 0x000f), else the block-header fields.
+        let mut volume_header_offset = block_volume_header_offset;
+        let mut volume_header_size =
+            u64::from(num_volume_header_sectors) * u64::from(bytes_per_sector);
+        if let Some(e) = entries
+            .iter()
+            .find(|e| e.entry_type == ENTRY_TYPE_VOLUME_HEADER)
+        {
+            let bo = le_u64(&e.data, 0);
+            let bs = le_u64(&e.data, 8);
+            if bo != 0 {
+                volume_header_offset = bo;
+            }
+            if bs != 0 {
+                volume_header_size = bs;
+            }
+        }
+
+        Some(FveMetadata {
+            encryption_method,
+            volume_guid,
+            creation_time,
+            entries,
+            encrypted_volume_size,
+            volume_header_offset,
+            volume_header_size,
+            metadata_offsets,
+            metadata_size,
+        })
     }
 
     /// Iterate the VMK protector entries.
