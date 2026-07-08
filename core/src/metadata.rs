@@ -24,8 +24,6 @@ pub const VALUE_TYPE_STRETCH: u16 = 0x0003;
 /// Value type: a Volume Master Key protector.
 pub const VALUE_TYPE_VMK: u16 = 0x0008;
 
-/// Key-protection type: clear key (an unprotected VMK).
-pub const PROTECTION_CLEAR_KEY: u16 = 0x0000;
 /// Key-protection type: password.
 pub const PROTECTION_PASSWORD: u16 = 0x2000;
 
