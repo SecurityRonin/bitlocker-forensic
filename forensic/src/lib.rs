@@ -1,7 +1,7 @@
 //! # bitlocker-forensic — BitLocker metadata anomaly auditor
 //!
 //! Emits severity-graded [`forensicnomicon::report::Finding`]s over the
-//! key-protector and cipher metadata decoded by [`bitlocker`](bitlocker).
+//! key-protector and cipher metadata decoded by [`bitlocker`].
 //! Findings are OBSERVATIONS, never verdicts — the examiner draws conclusions.
 //!
 //! The analyzer never decrypts; it audits the *protector inventory* and *cipher*

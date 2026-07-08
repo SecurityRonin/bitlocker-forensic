@@ -31,9 +31,9 @@ pub const PROTECTION_PASSWORD: u16 = 0x2000;
 /// value data that follows the 8-byte entry header).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MetadataEntry {
-    /// Entry type (e.g. [`ENTRY_TYPE_VMK`]).
+    /// Entry type (e.g. `ENTRY_TYPE_VMK`).
     pub entry_type: u16,
-    /// Value type (e.g. [`VALUE_TYPE_AES_CCM`]).
+    /// Value type (e.g. `VALUE_TYPE_AES_CCM`).
     pub value_type: u16,
     /// Entry version (typically 1).
     pub version: u16,
