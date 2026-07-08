@@ -59,8 +59,9 @@ offset+size.
 ### Encryption methods (metadata header @36, u16)
 
 `0x8000` AES-128-CBC + Elephant Diffuser **(this build)** · `0x8001` AES-256-CBC +
-diffuser · `0x8002/0x8003` AES-CBC 128/256 (no diffuser) · `0x8004/0x8005`
-AES-XTS 128/256 · `0x2000…` AES-CCM (key data).
+diffuser · `0x8002` AES-128-CBC no diffuser **(this build)** / `0x8003`
+AES-256-CBC no diffuser · `0x8004/0x8005` AES-XTS 128/256 · `0x2000…` AES-CCM
+(key data).
 
 ## Password → VMK → FVEK
 
@@ -78,7 +79,8 @@ AES-XTS 128/256 · `0x2000…` AES-CCM (key data).
 4. **FVEK/TWEAK** — AES-CCM-decrypt the top-level FVEK entry (type 0x0003, value
    0x0005) with the VMK. For method 0x8000 the container `data_size` is `0x4c` and
    **FVEK = container[12..44]**, **TWEAK = container[44..76]**; only the first 16
-   bytes of each are used (AES-128).
+   bytes of each are used (AES-128). Method 0x8002 (no diffuser) carries **only
+   the FVEK** at `container[12..]` — there is no TWEAK key.
 
 AES-CCM here is standard NIST SP 800-38C (nonce 12, tag 16, no AAD, L=3), so the
 on-disk `MAC‖ciphertext` maps directly to a detached-tag CCM decrypt.
@@ -101,6 +103,16 @@ plain[i]         ^= sector_key[i % 32]
 to 16. Diffuser words are 32-bit; `A: d[i] += d[i-2] ^ ROL(d[i-5], Ra[i%4])`,
 `B: d[i] += d[i+2] ^ ROL(d[i+5], Rb[i%4])` (indices mod word-count, decrypt runs
 `i` ascending).
+
+### Method 0x8002 — AES-CBC, no diffuser
+
+Identical IV and CBC step, then **stop** — no diffuser, no sector-key XOR (there
+is no TWEAK key):
+
+```
+iv    = AES-ECB-ENC(FVEK, LE128(O))
+plain = AES-CBC-DEC(FVEK, iv, cipher)
+```
 
 ## Volume-header relocation (the read-path subtlety)
 

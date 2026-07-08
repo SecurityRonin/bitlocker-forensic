@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0]
+
+### Added
+
+- `bitlocker-core`: sector decryption for **AES-128-CBC without the Elephant
+  Diffuser** (method `0x8002`) — the FVEK-keyed CBC core with no diffuser stage
+  and no TWEAK key. Tier-1 validated against `pybde` on the picoCTF 2025
+  `bitlocker-1.dd` image. Methods `0x8000` and `0x8002` are now both decrypted;
+  AES-256-CBC (`0x8003`) and AES-XTS (`0x8004`/`0x8005`) remain out of scope.
+
+## [0.1.0]
+
 ### Added
 
 - `bitlocker-core`: from-scratch BitLocker (BDE) reader and password decryptor.

@@ -18,7 +18,7 @@ against `pybde` on real disk images.**
 
 No `dislocker` C dependency, no FUSE, no mounting: one library that parses the
 FVE metadata, derives the keys from a password, and decrypts sectors
-(AES-128-CBC + Elephant Diffuser).
+(AES-128-CBC, with or without the Elephant Diffuser).
 
 ```rust,ignore
 use std::fs::File;
@@ -35,11 +35,18 @@ assert_eq!(&boot[3..11], b"MSWIN4.1");
 
 ## Scope
 
-This build targets exactly what the **Tier-1 oracle validates**: the **password**
-protector (`0x2000`) over **AES-128-CBC + Elephant Diffuser** (method `0x8000`).
-AES-XTS, recovery-password, startup-key, and TPM protectors are deliberately out
-of scope for *unlock* — but the metadata parser still **reports** every protector
-and cipher it finds. See [`docs/RESEARCH.md`](docs/RESEARCH.md).
+This build unlocks the **password** protector (`0x2000`) and decrypts two
+ciphers, each validated by a **Tier-1 oracle**:
+
+| Method | Cipher | Tier-1 oracle |
+|---|---|---|
+| `0x8000` | AES-128-CBC + Elephant Diffuser | dfvfs `bdetogo.raw` (`pybde`) |
+| `0x8002` | AES-128-CBC (no diffuser) | picoCTF 2025 `bitlocker-1.dd` (`pybde`) |
+
+AES-256-CBC (`0x8003`), AES-XTS (`0x8004`/`0x8005`), and recovery-password,
+startup-key, and TPM protectors are deliberately out of scope for *unlock* — but
+the metadata parser still **reports** every protector and cipher it finds. See
+[`docs/RESEARCH.md`](docs/RESEARCH.md).
 
 ## The two-crate split
 

@@ -32,3 +32,26 @@ curl -L -o /tmp/bdetogo.raw \
 BDE_ORACLE_IMAGE=/tmp/bdetogo.raw \
   cargo test -p bitlocker-core --test oracle_bdetogo -- --nocapture
 ```
+
+#### bitlocker-1.dd
+
+- **Source**: picoCTF 2025, challenge *Bitlocker-1* (CMU picoCTF). Forensics
+  challenge image distributed with the competition.
+- **md5**: `22c3492cbc26ff648df066e1ed5329a7`
+- **Size**: 100 MiB
+- **License / redistribution**: picoCTF challenge artifact; **not committed
+  here** (size) — documented for provenance only.
+- **Identity / contents**: bare BitLocker volume at offset 0 (no partition
+  table), method `0x8002` (AES-128-CBC, no Elephant Diffuser). Decrypted sector
+  0 is a valid NTFS boot sector. Protector: password (`0x2000`).
+- **Published key**: password `jacqueline` (the challenge solution).
+- **Used by**: `core/tests/oracle_bitlocker1.rs` (env var `BDE_CBC2_ORACLE`).
+  Ground-truth SHA-256 digests of decrypted sectors were produced by `pybde` —
+  see `docs/validation.md`.
+
+To run the method-`0x8002` Tier-1 test:
+
+```bash
+BDE_CBC2_ORACLE=/path/to/bitlocker-1.dd \
+  cargo test -p bitlocker-core --test oracle_bitlocker1 -- --nocapture
+```

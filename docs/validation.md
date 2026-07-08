@@ -37,6 +37,34 @@ BDE_ORACLE_IMAGE=/path/to/bdetogo.raw \
 The image is **not** committed (64 MiB); the test skips cleanly when the env var
 is unset. Provenance is recorded in `tests/data/README.md`.
 
+## Tier-1 — picoCTF `bitlocker-1.dd` vs `pybde` (method `0x8002`)
+
+- **Artifact**: `bitlocker-1.dd`, from picoCTF 2025 (challenge *Bitlocker-1*).
+  100 MiB, md5 `22c3492cbc26ff648df066e1ed5329a7`. Bare BitLocker volume at
+  offset 0, method `0x8002` (AES-128-CBC, no Elephant Diffuser).
+- **Published key**: password `jacqueline` (protector type `0x2000`).
+- **Answer key**: `pybde` decrypting the same image with the same password.
+  `bitlocker-core` reproduces each decrypted 512-byte sector **byte-for-byte**.
+
+The env-gated test `core/tests/oracle_bitlocker1.rs` (`BDE_CBC2_ORACLE`) unlocks
+the image and asserts these SHA-256 digests:
+
+| Logical offset | SHA-256 |
+|---|---|
+| 0 (NTFS boot sector) | `f2468bab…a65e` |
+| 512 | `ef6d6118…b546` |
+| 1024 | `e8459413…edad` |
+| 1536 | `f49bb7df…a14fe` |
+| 2048 | `7289d589…7ee3` |
+
+```bash
+BDE_CBC2_ORACLE=/path/to/bitlocker-1.dd \
+  cargo test -p bitlocker-core --test oracle_bitlocker1 -- --nocapture
+```
+
+The image is **not** committed (100 MiB); the test skips cleanly when the env var
+is unset. Provenance is recorded in `tests/data/README.md`.
+
 ## Tier-2 — independent hash vectors
 
 The password-hash step is checked against values computed independently by
@@ -46,11 +74,12 @@ ground truth is derivable, not authored alongside the code.
 
 ## Tier-3 — structural unit tests
 
-FVE metadata-entry parsing, volume-header variant detection, and the diffuser's
-encrypt/decrypt round-trip are exercised over hand-built byte buffers. These are
-regression scaffolding under the Tier-1 oracle — the round-trip proves
-self-consistency only; the real correctness proof for the diffuser and the full
-pipeline is Tier-1.
+FVE metadata-entry parsing, volume-header variant detection, and both sector
+transforms' encrypt/decrypt round-trips (CBC + diffuser for `0x8000`, CBC-only
+for `0x8002`) are exercised over hand-built byte buffers. These are regression
+scaffolding under the Tier-1 oracles — a round-trip proves self-consistency
+only; the real correctness proof for each cipher and the full pipeline is
+Tier-1.
 
 ## Fuzzing
 

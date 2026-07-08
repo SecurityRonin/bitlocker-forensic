@@ -5,11 +5,13 @@
 //! entries) and decrypts a volume from a password, exposing a plaintext
 //! `Read + Seek` view.
 //!
-//! Scope of this build: the **password** protector (type `0x2000`) over the
-//! **AES-128-CBC + Elephant Diffuser** cipher (method `0x8000`) — exactly what
-//! the Tier-1 dfvfs `bdetogo.raw` oracle validates. AES-XTS, recovery-password,
-//! startup-key and TPM protectors are deliberately out of scope here (see the
-//! crate README); the metadata parser still *reports* their presence.
+//! Scope of this build: the **password** protector (type `0x2000`) over
+//! **AES-128-CBC** — with the Elephant Diffuser (method `0x8000`) or without it
+//! (method `0x8002`), each validated by a Tier-1 `pybde` oracle (dfvfs
+//! `bdetogo.raw` and picoCTF `bitlocker-1.dd` respectively). AES-256-CBC,
+//! AES-XTS, recovery-password, startup-key and TPM protectors are deliberately
+//! out of scope here (see the crate README); the metadata parser still *reports*
+//! their presence.
 //!
 //! Every primitive comes from an audited RustCrypto crate — `aes`, `cbc`, `ccm`,
 //! `sha2` — except the Elephant Diffuser, for which no crate exists; it is
