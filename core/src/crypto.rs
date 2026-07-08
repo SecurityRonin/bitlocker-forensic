@@ -249,14 +249,22 @@ impl SectorCipher {
             GenericArray::from_slice(&iv),
         );
         let len = buf.len() - (buf.len() % 16);
-        if let Ok(plain) = dec.decrypt_padded_mut::<NoPadding>(&mut buf[..len]) {
-            let plain_len = plain.len();
-            // Diffuser B then A, then XOR the sector key.
-            diffuser_b_decrypt(&mut buf[..plain_len]);
-            diffuser_a_decrypt(&mut buf[..plain_len]);
-            for (i, b) in buf[..plain_len].iter_mut().enumerate() {
-                *b ^= sector_key[i % 32];
+        // Explicit `match` (not `if let`) so the unreachable Err arm is a named,
+        // panic-free defence carrying the coverage-gate marker.
+        #[allow(clippy::single_match)]
+        match dec.decrypt_padded_mut::<NoPadding>(&mut buf[..len]) {
+            Ok(plain) => {
+                let plain_len = plain.len();
+                // Diffuser B then A, then XOR the sector key.
+                diffuser_b_decrypt(&mut buf[..plain_len]);
+                diffuser_a_decrypt(&mut buf[..plain_len]);
+                for (i, b) in buf[..plain_len].iter_mut().enumerate() {
+                    *b ^= sector_key[i % 32];
+                }
             }
+            // `len` is a 16-byte multiple, so NoPadding CBC decryption cannot
+            // fail; the arm keeps the reader panic-free if that ever changes.
+            Err(_) => {} // cov:unreachable: NoPadding CBC over a 16-byte-multiple slice cannot fail
         }
         buf
     }
@@ -293,7 +301,11 @@ mod tests {
     use super::*;
 
     fn hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+        use std::fmt::Write;
+        bytes.iter().fold(String::new(), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
     }
 
     #[test]
@@ -346,8 +358,11 @@ mod tests {
         let mut empty: [u8; 0] = [];
         diffuser_a_decrypt(&mut empty);
         diffuser_b_decrypt(&mut empty);
+        diffuser_a_encrypt(&mut empty);
+        diffuser_b_encrypt(&mut empty);
         let mut three = [1u8, 2, 3];
         diffuser_a_decrypt(&mut three); // < 1 word after chunks_exact -> no-op
+        diffuser_b_encrypt(&mut three);
     }
 
     #[test]
@@ -379,7 +394,7 @@ mod tests {
     fn sector_cipher_roundtrip() {
         let cipher = SectorCipher::new([0x11; 16], [0x22; 16]);
         let plain = sample_sector();
-        let off = 0x2110_800u64;
+        let off = 0x0211_0800u64;
         let ct = cipher.encrypt_sector(&plain, off);
         assert_ne!(ct, plain);
         assert_eq!(cipher.decrypt_sector(&ct, off), plain);

@@ -171,10 +171,8 @@ mod tests {
         let mut s = base_sector();
         s[0..3].copy_from_slice(&[0xeb, 0x52, 0x90]);
         s[3..11].copy_from_slice(b"NTFS    ");
-        match VolumeHeader::parse(&s) {
-            Err(BdeError::NotBitLocker { signature }) => assert_eq!(&signature, b"NTFS    "),
-            other => panic!("expected NotBitLocker, got {other:?}"),
-        }
+        let err = VolumeHeader::parse(&s).unwrap_err();
+        assert!(matches!(err, BdeError::NotBitLocker { signature } if &signature == b"NTFS    "));
     }
 
     #[test]

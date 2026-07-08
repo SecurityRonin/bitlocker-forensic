@@ -257,8 +257,8 @@ mod tests {
         block[10..12].copy_from_slice(&2u16.to_le_bytes()); // version 2
         block[16..24].copy_from_slice(&0x0400_0000u64.to_le_bytes()); // encrypted size
         block[28..32].copy_from_slice(&16u32.to_le_bytes()); // vol header sectors
-        block[56..64].copy_from_slice(&0x2110_800u64.to_le_bytes()); // vol header offset
-                                                                     // metadata header @64
+        block[56..64].copy_from_slice(&0x0211_0800u64.to_le_bytes()); // vol header offset
+                                                                      // metadata header @64
         block[64..68].copy_from_slice(&(metadata_size as u32).to_le_bytes());
         block[64 + 16..64 + 32].copy_from_slice(&[0xAB; 16]); // volume guid
         block[64 + 36..64 + 38].copy_from_slice(&0x8000u16.to_le_bytes()); // method
@@ -271,7 +271,7 @@ mod tests {
     fn parse_full_block() {
         // A volume-header-block entry (0x000f) + a password VMK.
         let mut vh_data = Vec::new();
-        vh_data.extend_from_slice(&0x2110_800u64.to_le_bytes()); // block offset
+        vh_data.extend_from_slice(&0x0211_0800u64.to_le_bytes()); // block offset
         vh_data.extend_from_slice(&0x0051_5a00u64.to_le_bytes()); // block size
         let vh = entry_bytes(
             ENTRY_TYPE_VOLUME_HEADER,
@@ -290,7 +290,7 @@ mod tests {
         assert_eq!(m.volume_guid, [0xAB; 16]);
         assert_eq!(m.creation_time, 130_461_864_497_281_120);
         assert_eq!(m.encrypted_volume_size, 0x0400_0000);
-        assert_eq!(m.volume_header_offset, 0x2110_800);
+        assert_eq!(m.volume_header_offset, 0x0211_0800);
         assert_eq!(m.volume_header_size, 0x0051_5a00); // from the 0x000f entry
         assert_eq!(m.entries.len(), 2);
         assert_eq!(m.protector_types(), vec![PROTECTION_PASSWORD]);
@@ -308,7 +308,7 @@ mod tests {
         let block = build_block(&[]);
         let m = FveMetadata::parse(&block, 512).unwrap();
         assert_eq!(m.volume_header_size, 16 * 512);
-        assert_eq!(m.volume_header_offset, 0x2110_800);
+        assert_eq!(m.volume_header_offset, 0x0211_0800);
     }
 
     #[test]

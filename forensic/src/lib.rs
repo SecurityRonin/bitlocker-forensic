@@ -122,7 +122,10 @@ impl AnomalyKind {
     fn evidence(&self) -> Vec<Evidence> {
         match self {
             AnomalyKind::Protector { protector_type } => {
-                vec![evidence("protector_type", format!("0x{protector_type:04x}"))]
+                vec![evidence(
+                    "protector_type",
+                    format!("0x{protector_type:04x}"),
+                )]
             }
             AnomalyKind::WeakCipher { method } => {
                 vec![evidence("encryption_method", format!("0x{method:04x}"))]

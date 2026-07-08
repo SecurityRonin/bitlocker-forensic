@@ -19,10 +19,13 @@ use bitlocker::BitLockerVolume;
 use sha2::{Digest, Sha256};
 
 fn sha256_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
     Sha256::digest(bytes)
         .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+        .fold(String::new(), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 #[test]

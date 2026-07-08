@@ -265,9 +265,9 @@ impl<R: Read + Seek> Read for DecryptedVolume<R> {
 impl<R: Read + Seek> Seek for DecryptedVolume<R> {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         let new = match pos {
-            SeekFrom::Start(o) => o as i128,
-            SeekFrom::End(o) => self.total_size as i128 + o as i128,
-            SeekFrom::Current(o) => self.position as i128 + o as i128,
+            SeekFrom::Start(o) => i128::from(o),
+            SeekFrom::End(o) => i128::from(self.total_size) + i128::from(o),
+            SeekFrom::Current(o) => i128::from(self.position) + i128::from(o),
         };
         if new < 0 {
             return Err(std::io::Error::new(
@@ -316,6 +316,9 @@ mod tests {
     const RELOCATED_OFFSET: u64 = 0x4000;
     const META_BLOCK_OFFSET: u64 = 0x1000;
     const IMAGE_SIZE: usize = 0x5000;
+    // Smaller than the image so a physical offset past it exercises the
+    // still-encrypted-region boundary (bytes beyond are returned raw).
+    const ENCRYPTED_SIZE: u64 = 0x4800;
 
     fn entry(entry_type: u16, value_type: u16, data: &[u8]) -> Vec<u8> {
         let size = (8 + data.len()) as u16;
@@ -379,7 +382,7 @@ mod tests {
         let mb = META_BLOCK_OFFSET as usize;
         image[mb..mb + 8].copy_from_slice(b"-FVE-FS-");
         image[mb + 10..mb + 12].copy_from_slice(&2u16.to_le_bytes());
-        image[mb + 16..mb + 24].copy_from_slice(&(IMAGE_SIZE as u64).to_le_bytes());
+        image[mb + 16..mb + 24].copy_from_slice(&ENCRYPTED_SIZE.to_le_bytes());
         image[mb + 28..mb + 32].copy_from_slice(&1u32.to_le_bytes());
         image[mb + 32..mb + 40].copy_from_slice(&META_BLOCK_OFFSET.to_le_bytes());
         image[mb + 56..mb + 64].copy_from_slice(&RELOCATED_OFFSET.to_le_bytes());
@@ -412,16 +415,157 @@ mod tests {
         vol.read_at(0, &mut buf).unwrap();
         assert_eq!(buf, plain);
         assert_eq!(vol.metadata().encryption_method, 0x8000);
+
+        // A metadata-block region reads back as zero in the decrypted view.
+        let mut z = [1u8; 512];
+        vol.read_at(META_BLOCK_OFFSET, &mut z).unwrap();
+        assert_eq!(z, [0u8; 512]);
+
+        // A sector past the relocated volume-header region but still encrypted:
+        // physical == logical, decrypted in place (no panic).
+        let mut e = [0u8; 512];
+        vol.read_at(0x600, &mut e).unwrap();
+
+        // A sector at/after the encrypted-volume-size boundary is returned raw
+        // (the image is zero there).
+        let mut r = [0u8; 512];
+        vol.read_at(ENCRYPTED_SIZE, &mut r).unwrap();
+        assert_eq!(r, [0u8; 512]);
+    }
+
+    #[test]
+    fn seek_variants_and_eof() {
+        use std::io::{Read as _, Seek as _};
+        let (image, _) = build_volume("test-pw");
+        let mut vol = BitLockerVolume::unlock_with_password(Cursor::new(image), "test-pw").unwrap();
+
+        assert_eq!(vol.seek(SeekFrom::End(0)).unwrap(), IMAGE_SIZE as u64);
+        let mut b = [0u8; 16];
+        assert_eq!(vol.read(&mut b).unwrap(), 0); // read at EOF
+
+        assert_eq!(vol.seek(SeekFrom::Start(10)).unwrap(), 10);
+        assert_eq!(vol.seek(SeekFrom::Current(5)).unwrap(), 15);
+        assert!(vol.seek(SeekFrom::Current(-100)).is_err()); // before start
+    }
+
+    /// A metadata-only image (no key material) with configurable cipher,
+    /// protectors, header offsets, and whether the block is actually present.
+    fn meta_only_image(
+        method: u16,
+        protectors: &[u16],
+        header_offsets: [u64; 3],
+        block_at: Option<usize>,
+    ) -> Vec<u8> {
+        let mut entries = Vec::new();
+        for p in protectors {
+            let mut d = vec![0u8; 28];
+            d[26..28].copy_from_slice(&p.to_le_bytes());
+            entries.extend(entry(0x0002, 0x0008, &d));
+        }
+        let metadata_size = 48 + entries.len();
+        let mut image = vec![0u8; 0x2000];
+        image[0..3].copy_from_slice(&[0xeb, 0x58, 0x90]);
+        image[3..11].copy_from_slice(b"MSWIN4.1");
+        image[12] = 0x02;
+        image[440..448].copy_from_slice(&header_offsets[0].to_le_bytes());
+        image[448..456].copy_from_slice(&header_offsets[1].to_le_bytes());
+        image[456..464].copy_from_slice(&header_offsets[2].to_le_bytes());
+        if let Some(mb) = block_at {
+            image[mb..mb + 8].copy_from_slice(b"-FVE-FS-");
+            image[mb + 10..mb + 12].copy_from_slice(&2u16.to_le_bytes());
+            image[mb + 32..mb + 40].copy_from_slice(&(mb as u64).to_le_bytes());
+            image[mb + 64..mb + 68].copy_from_slice(&(metadata_size as u32).to_le_bytes());
+            image[mb + 64 + 36..mb + 64 + 38].copy_from_slice(&method.to_le_bytes());
+            image[mb + 64 + 48..mb + 64 + 48 + entries.len()].copy_from_slice(&entries);
+        }
+        image
+    }
+
+    #[test]
+    fn unsupported_method_errors() {
+        let img = meta_only_image(0x8004, &[0x2000], [0x1000, 0, 0], Some(0x1000));
+        let res = BitLockerVolume::unlock_with_password(Cursor::new(img), "x");
+        assert!(matches!(
+            res,
+            Err(BdeError::UnsupportedEncryptionMethod { method: 0x8004 })
+        ));
+    }
+
+    #[test]
+    fn no_password_protector_errors() {
+        // Recovery-only volume — no password protector to unlock with.
+        let img = meta_only_image(0x8000, &[0x0800], [0x1000, 0, 0], Some(0x1000));
+        let res = BitLockerVolume::unlock_with_password(Cursor::new(img), "x");
+        assert!(matches!(res, Err(BdeError::NoPasswordProtector { .. })));
+    }
+
+    #[test]
+    fn no_valid_metadata_errors() {
+        // Valid BitLocker header, but the block offsets point to non-FVE bytes.
+        let img = meta_only_image(0x8000, &[0x2000], [0x1000, 0x1200, 0x1400], None);
+        let err = BitLockerVolume::read_metadata(&mut Cursor::new(img)).unwrap_err();
+        assert!(matches!(err, BdeError::NoValidMetadata { .. }));
+    }
+
+    #[test]
+    fn read_metadata_skips_zero_first_offset() {
+        // First offset zero (skipped), second valid — covers the `continue`.
+        let img = meta_only_image(0x8000, &[0x2000], [0, 0x1000, 0], Some(0x1000));
+        let meta = BitLockerVolume::read_metadata(&mut Cursor::new(img)).unwrap();
+        assert_eq!(meta.encryption_method, 0x8000);
+    }
+
+    /// A reader that returns a valid header once, then a transient `Interrupted`,
+    /// then a hard error — to exercise the I/O-error arms of `read_available`.
+    struct FlakyReader {
+        header: Vec<u8>,
+        phase: usize,
+    }
+
+    impl Read for FlakyReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.phase += 1;
+            match self.phase {
+                1 => {
+                    let n = buf.len().min(self.header.len());
+                    buf[..n].copy_from_slice(&self.header[..n]);
+                    Ok(n)
+                }
+                2 => Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "eintr",
+                )),
+                _ => Err(std::io::Error::other("boom")),
+            }
+        }
+    }
+
+    impl Seek for FlakyReader {
+        fn seek(&mut self, _pos: SeekFrom) -> std::io::Result<u64> {
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn io_error_during_block_read_propagates() {
+        let mut header = vec![0u8; 512];
+        header[0..3].copy_from_slice(&[0xeb, 0x58, 0x90]);
+        header[3..11].copy_from_slice(b"MSWIN4.1");
+        header[12] = 0x02;
+        header[440..448].copy_from_slice(&0x1000u64.to_le_bytes());
+        let mut reader = FlakyReader { header, phase: 0 };
+        let res = BitLockerVolume::read_metadata(&mut reader);
+        assert!(matches!(res, Err(BdeError::Io(_))));
     }
 
     #[test]
     fn wrong_password_fails_authentication() {
         let (image, _) = build_volume("test-pw");
-        match BitLockerVolume::unlock_with_password(Cursor::new(image), "wrong") {
-            Err(BdeError::AuthenticationFailed { what }) => assert_eq!(what, "volume master key"),
-            Err(e) => panic!("expected AuthenticationFailed, got {e:?}"),
-            Ok(_) => panic!("expected AuthenticationFailed, got a decrypted volume"),
-        }
+        let res = BitLockerVolume::unlock_with_password(Cursor::new(image), "wrong");
+        assert!(matches!(
+            res,
+            Err(BdeError::AuthenticationFailed { what }) if what == "volume master key"
+        ));
     }
 
     #[test]

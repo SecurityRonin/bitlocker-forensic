@@ -5,6 +5,8 @@
 //! hand-written here rather than pulling in a dependency — it renders identically
 //! to the canonical `8-4-4-4-12` form `libbde`/`pybde` print.
 
+use std::fmt::Write;
+
 use crate::bytes::{le_u16, le_u32};
 
 /// Render a 16-byte Microsoft GUID in canonical `8-4-4-4-12` lowercase form.
@@ -18,7 +20,8 @@ pub fn format_guid(raw: &[u8; 16]) -> String {
         if i == 2 {
             tail.push('-');
         }
-        tail.push_str(&format!("{b:02x}"));
+        // `write!` to a String is infallible.
+        let _ = write!(tail, "{b:02x}");
     }
     format!("{d1:08x}-{d2:04x}-{d3:04x}-{tail}")
 }

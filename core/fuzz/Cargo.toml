@@ -1,0 +1,28 @@
+[package]
+name = "bitlocker-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.bitlocker]
+path = ".."
+package = "bitlocker-core"
+
+# Prevent this from interfering with workspace members up the tree.
+[workspace]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "fuzz_metadata"
+path = "fuzz_targets/fuzz_metadata.rs"
+test = false
+doc = false
+bench = false

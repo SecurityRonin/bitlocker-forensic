@@ -80,10 +80,18 @@ fn protector_note_includes_type_and_name() {
 #[test]
 fn cipher_and_protector_names() {
     assert_eq!(cipher_name(0x8000), "AES-128-CBC + Elephant Diffuser");
+    assert_eq!(cipher_name(0x8001), "AES-256-CBC + Elephant Diffuser");
+    assert_eq!(cipher_name(0x8002), "AES-128-CBC");
+    assert_eq!(cipher_name(0x8003), "AES-256-CBC");
     assert_eq!(cipher_name(0x8004), "AES-128-XTS");
+    assert_eq!(cipher_name(0x8005), "AES-256-XTS");
     assert_eq!(cipher_name(0x9999), "unknown");
-    assert_eq!(protector_name(0x2000), "password");
+    assert_eq!(protector_name(0x0000), "clear key");
     assert_eq!(protector_name(0x0100), "TPM");
+    assert_eq!(protector_name(0x0200), "startup key");
+    assert_eq!(protector_name(0x0500), "TPM and PIN");
+    assert_eq!(protector_name(0x0800), "recovery password");
+    assert_eq!(protector_name(0x2000), "password");
     assert_eq!(protector_name(0x1234), "other/unknown");
 }
 
