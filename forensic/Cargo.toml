@@ -1,0 +1,20 @@
+[package]
+name         = "bitlocker-forensic"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+description  = "Anomaly auditor over bitlocker-core — key-protector inventory, clear-key and weak-cipher findings via forensicnomicon::report"
+keywords     = ["forensics", "bitlocker", "encryption", "dfir", "windows"]
+categories   = ["parser-implementations"]
+readme       = "../README.md"
+
+[dependencies]
+bitlocker = { workspace = true }
+forensicnomicon = { workspace = true }
+jiff = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,32 @@
+[package]
+name         = "bitlocker-core"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+description  = "From-scratch reader/decryptor for BitLocker Drive Encryption (BDE) volumes — password unlock, AES-CBC + Elephant Diffuser"
+keywords     = ["forensics", "bitlocker", "encryption", "dfir", "windows"]
+categories   = ["parser-implementations", "cryptography"]
+readme       = "../README.md"
+exclude      = ["/fuzz", "/.github", "/docs"]
+
+[lib]
+name = "bitlocker"
+
+[dependencies]
+thiserror = { workspace = true }
+aes  = { workspace = true }
+cbc  = { workspace = true }
+ccm  = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+# Tier-1 oracle: hash decrypted sectors of the real dfvfs bdetogo.raw image and
+# compare to pybde ground truth (see tests/oracle_bdetogo.rs, env-gated on
+# BDE_ORACLE_IMAGE). RustCrypto SHA-256.
+sha2 = { workspace = true }
+
+[lints]
+workspace = true
