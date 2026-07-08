@@ -32,6 +32,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod bytes;
+mod crypto;
 mod error;
 mod guid;
 mod header;
