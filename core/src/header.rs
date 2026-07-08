@@ -48,9 +48,57 @@ impl VolumeHeader {
     /// # Errors
     /// Returns [`BdeError::NotBitLocker`] (carrying the offending signature bytes)
     /// when neither the `-FVE-FS-` nor the `MSWIN4.1` signature is present.
-    pub fn parse(_sector: &[u8]) -> Result<VolumeHeader> {
-        // RED stub — replaced by the real parser in the GREEN commit.
-        unimplemented!("VolumeHeader::parse")
+    pub fn parse(sector: &[u8]) -> Result<VolumeHeader> {
+        let mut signature = [0u8; 8];
+        if let Some(s) = sector.get(3..11) {
+            signature.copy_from_slice(s);
+        }
+        let mut bytes_per_sector = le_u16(sector, 11);
+        if bytes_per_sector == 0 {
+            bytes_per_sector = 512;
+        }
+
+        if &signature == SIG_TO_GO {
+            return Ok(VolumeHeader {
+                variant: BdeVariant::BitLockerToGo,
+                bytes_per_sector,
+                bitlocker_guid: read_guid(sector, 424),
+                fve_metadata_offsets: [
+                    le_u64(sector, 440),
+                    le_u64(sector, 448),
+                    le_u64(sector, 456),
+                ],
+            });
+        }
+
+        if &signature == SIG_FVE {
+            let boot = sector.get(0..3).unwrap_or(&[]);
+            if boot == BOOT_WIN7 {
+                return Ok(VolumeHeader {
+                    variant: BdeVariant::Windows7OrLater,
+                    bytes_per_sector,
+                    bitlocker_guid: read_guid(sector, 160),
+                    fve_metadata_offsets: [
+                        le_u64(sector, 176),
+                        le_u64(sector, 184),
+                        le_u64(sector, 192),
+                    ],
+                });
+            }
+            // Windows Vista: block 1 is a cluster number at offset 56; the cluster
+            // size is bytes-per-sector × sectors-per-cluster (offset 13).
+            let sectors_per_cluster = u64::from(sector.get(13).copied().unwrap_or(1).max(1));
+            let cluster_size = u64::from(bytes_per_sector) * sectors_per_cluster;
+            let block1 = le_u64(sector, 56).saturating_mul(cluster_size);
+            return Ok(VolumeHeader {
+                variant: BdeVariant::WindowsVista,
+                bytes_per_sector,
+                bitlocker_guid: [0u8; 16],
+                fve_metadata_offsets: [block1, 0, 0],
+            });
+        }
+
+        Err(BdeError::NotBitLocker { signature })
     }
 }
 
