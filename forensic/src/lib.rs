@@ -223,8 +223,26 @@ impl Observation for Anomaly {
 /// returning classified anomalies. Pure and side-effect-free.
 #[must_use]
 pub fn audit(metadata: &FveMetadata, to_go: bool) -> Vec<Anomaly> {
-    let _ = ();
-    unimplemented!("RED stub");
+    let mut out = Vec::new();
+
+    if to_go {
+        out.push(Anomaly::new(AnomalyKind::ToGo));
+    }
+
+    if !is_aes_xts(metadata.encryption_method) {
+        out.push(Anomaly::new(AnomalyKind::WeakCipher {
+            method: metadata.encryption_method,
+        }));
+    }
+
+    for protector_type in metadata.protector_types() {
+        if protector_type == PROT_CLEAR_KEY {
+            out.push(Anomaly::new(AnomalyKind::ClearKeyPresent));
+        }
+        out.push(Anomaly::new(AnomalyKind::Protector { protector_type }));
+    }
+
+    out
 }
 
 /// Parse a BitLocker volume from `reader` and audit its metadata.
@@ -233,8 +251,12 @@ pub fn audit(metadata: &FveMetadata, to_go: bool) -> Vec<Anomaly> {
 /// Propagates [`BdeError`] from header/metadata parsing (e.g. a non-BitLocker
 /// image or no valid FVE metadata block).
 pub fn audit_reader<R: Read + Seek>(reader: &mut R) -> Result<Vec<Anomaly>, BdeError> {
-    let _ = ();
-    unimplemented!("RED stub");
+    let mut header = [0u8; 512];
+    reader.seek(SeekFrom::Start(0))?;
+    reader.read_exact(&mut header)?;
+    let variant = VolumeHeader::parse(&header)?.variant;
+    let metadata = BitLockerVolume::read_metadata(reader)?;
+    Ok(audit(&metadata, variant == BdeVariant::BitLockerToGo))
 }
 
 /// Audit a BitLocker volume and map each anomaly to a canonical [`Finding`],
@@ -246,8 +268,15 @@ pub fn audit_findings<R: Read + Seek>(
     reader: &mut R,
     scope: impl Into<String>,
 ) -> Result<Vec<Finding>, BdeError> {
-    let _ = ();
-    unimplemented!("RED stub");
+    let source = Source {
+        analyzer: ANALYZER.to_string(),
+        scope: scope.into(),
+        version: Some(env!("CARGO_PKG_VERSION").to_string()),
+    };
+    Ok(audit_reader(reader)?
+        .into_iter()
+        .map(|anomaly| anomaly.to_finding(source.clone()))
+        .collect())
 }
 
 #[cfg(test)]
