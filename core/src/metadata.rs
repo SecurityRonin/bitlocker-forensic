@@ -17,6 +17,9 @@ pub const ENTRY_TYPE_FVEK: u16 = 0x0003;
 /// Metadata-entry type / value type: the volume-header block descriptor.
 pub const ENTRY_TYPE_VOLUME_HEADER: u16 = 0x000f;
 
+/// Value type: a key (`method(u32)@0` then the raw key data). Holds the clear
+/// key inside a clear-key VMK protector.
+pub const VALUE_TYPE_KEY: u16 = 0x0001;
 /// Value type: an AES-CCM encrypted key.
 pub const VALUE_TYPE_AES_CCM: u16 = 0x0005;
 /// Value type: a stretch key (salt + nested AES-CCM key).
@@ -28,6 +31,9 @@ pub const VALUE_TYPE_VMK: u16 = 0x0008;
 pub const PROTECTION_PASSWORD: u16 = 0x2000;
 /// Key-protection type: recovery password (the 48-digit numeric key).
 pub const PROTECTION_RECOVERY: u16 = 0x0800;
+/// Key-protection type: clear key. The VMK is stored unprotected (BitLocker adds
+/// this when protection is *suspended*), so the volume needs no credential.
+pub const PROTECTION_CLEAR: u16 = 0x0000;
 
 /// One FVE metadata entry (`entry_type`, `value_type`, `version`, and the raw
 /// value data that follows the 8-byte entry header).
