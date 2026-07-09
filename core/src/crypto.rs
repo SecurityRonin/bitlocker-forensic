@@ -8,8 +8,10 @@
 //! round-trip proves nothing — see `docs/validation.md`).
 
 use aes::cipher::block_padding::NoPadding;
-use aes::cipher::{BlockDecryptMut, BlockEncrypt, KeyInit, KeyIvInit};
-use aes::Aes128;
+use aes::cipher::{
+    BlockCipher, BlockDecrypt, BlockDecryptMut, BlockEncrypt, BlockSizeUser, KeyInit, KeyIvInit,
+};
+use aes::{Aes128, Aes256};
 use ccm::aead::generic_array::GenericArray;
 use ccm::aead::AeadInPlace;
 use ccm::consts::{U12, U16};
@@ -137,14 +139,32 @@ pub fn aes_ccm_wrap(key: &[u8; 32], nonce: &[u8; 12], plaintext: &[u8]) -> Vec<u
     out
 }
 
-/// The volume sector cipher. Both supported methods (0x8000 and 0x8002) share
-/// the FVEK-keyed AES-128-CBC core; the presence of the TWEAK key is the mode
-/// discriminant — `Some` applies the Elephant Diffuser (method 0x8000), `None`
-/// stops at the CBC plaintext (method 0x8002).
+/// The FVEK-keyed sector transform, selected by encryption method. Each variant
+/// owns exactly the key material its cipher needs; the enum keeps the dispatch
+/// panic-free and extends one variant per validated method.
+//
+// The variants differ in size because each holds pre-expanded AES key schedules
+// (Cbc128 carries two — `fvek_ecb` and the diffuser tweak). The cipher is built
+// once per unlocked volume and lives for its lifetime, while `decrypt_sector`
+// runs per sector; boxing a variant would add heap indirection to that hot path
+// for no benefit, so the size skew is deliberate.
+#[allow(clippy::large_enum_variant)]
+enum SectorTransform {
+    /// AES-128-CBC (methods 0x8000/0x8002). `tweak` `Some` ⇒ the Elephant
+    /// Diffuser is applied (0x8000); `None` ⇒ the CBC plaintext is final (0x8002).
+    Cbc128 {
+        fvek: [u8; 16],
+        fvek_ecb: Aes128,
+        tweak: Option<Aes128>,
+    },
+    /// AES-256-CBC, no diffuser (method 0x8003).
+    Cbc256 { fvek: [u8; 32], fvek_ecb: Aes256 },
+}
+
+/// The volume sector cipher: a validated [`SectorTransform`] plus the read-path
+/// entry points that apply it at a given volume byte offset.
 pub struct SectorCipher {
-    fvek: [u8; 16],
-    fvek_ecb: Aes128,
-    tweak: Option<Aes128>,
+    transform: SectorTransform,
 }
 
 impl SectorCipher {
@@ -153,9 +173,11 @@ impl SectorCipher {
     #[must_use]
     pub fn new(fvek: [u8; 16], tweak: [u8; 16]) -> SectorCipher {
         SectorCipher {
-            fvek,
-            fvek_ecb: Aes128::new(GenericArray::from_slice(&fvek)),
-            tweak: Some(Aes128::new(GenericArray::from_slice(&tweak))),
+            transform: SectorTransform::Cbc128 {
+                fvek,
+                fvek_ecb: Aes128::new(GenericArray::from_slice(&fvek)),
+                tweak: Some(Aes128::new(GenericArray::from_slice(&tweak))),
+            },
         }
     }
 
@@ -164,23 +186,48 @@ impl SectorCipher {
     #[must_use]
     pub fn new_cbc(fvek: [u8; 16]) -> SectorCipher {
         SectorCipher {
-            fvek,
-            fvek_ecb: Aes128::new(GenericArray::from_slice(&fvek)),
-            tweak: None,
+            transform: SectorTransform::Cbc128 {
+                fvek,
+                fvek_ecb: Aes128::new(GenericArray::from_slice(&fvek)),
+                tweak: None,
+            },
         }
     }
 
-    fn ecb(cipher: &Aes128, input: &[u8; 16]) -> [u8; 16] {
+    /// Build a method-0x8003 cipher (AES-256-CBC, no diffuser) from the 32-byte
+    /// FVEK. A no-diffuser volume has no TWEAK key.
+    #[must_use]
+    pub fn new_cbc256(fvek: [u8; 32]) -> SectorCipher {
+        SectorCipher {
+            transform: SectorTransform::Cbc256 {
+                fvek,
+                fvek_ecb: Aes256::new(GenericArray::from_slice(&fvek)),
+            },
+        }
+    }
+
+    /// AES-ECB-encrypt one block with `cipher` (used for the CBC IV and the
+    /// diffuser sector key). Works for any AES key size (16-byte block).
+    fn ecb<C>(cipher: &C, input: &[u8; 16]) -> [u8; 16]
+    where
+        C: BlockEncrypt + BlockSizeUser<BlockSize = U16>,
+    {
         let mut block = GenericArray::clone_from_slice(input);
         cipher.encrypt_block(&mut block);
         block.into()
     }
 
-    /// The 32-byte per-sector key: `ECB(TWEAK, LE128(off))` ‖
-    /// `ECB(TWEAK, LE128(off) with byte[15]=0x80)`.
-    fn sector_key(tweak: &Aes128, byte_offset: u64) -> [u8; 32] {
+    /// `LE128(byte_offset)`: the 8-byte little-endian offset, zero-padded to 16.
+    fn le128(byte_offset: u64) -> [u8; 16] {
         let mut iv = [0u8; 16];
         iv[0..8].copy_from_slice(&byte_offset.to_le_bytes());
+        iv
+    }
+
+    /// The 32-byte diffuser per-sector key: `ECB(TWEAK, LE128(off))` ‖
+    /// `ECB(TWEAK, LE128(off) with byte[15]=0x80)`.
+    fn sector_key(tweak: &Aes128, byte_offset: u64) -> [u8; 32] {
+        let mut iv = Self::le128(byte_offset);
         let lower = Self::ecb(tweak, &iv);
         iv[15] = 0x80;
         let upper = Self::ecb(tweak, &iv);
@@ -190,42 +237,50 @@ impl SectorCipher {
         key
     }
 
-    fn cbc_iv(&self, byte_offset: u64) -> [u8; 16] {
-        let mut iv = [0u8; 16];
-        iv[0..8].copy_from_slice(&byte_offset.to_le_bytes());
-        Self::ecb(&self.fvek_ecb, &iv)
+    /// AES-CBC-decrypt `buf` in place with the FVEK and IV (no padding: the
+    /// sector is a 16-byte multiple). Returns the plaintext length. Generic over
+    /// the AES key size so 128- and 256-bit CBC share one panic-free body.
+    fn cbc_decrypt_inplace<C>(fvek: &[u8], iv: &[u8; 16], buf: &mut [u8]) -> usize
+    where
+        C: BlockCipher + BlockDecrypt + KeyInit,
+    {
+        let dec =
+            cbc::Decryptor::<C>::new(GenericArray::from_slice(fvek), GenericArray::from_slice(iv));
+        let len = buf.len() - (buf.len() % 16);
+        // Explicit `match` so the unreachable Err arm is a named, panic-free
+        // defence carrying the coverage-gate marker.
+        match dec.decrypt_padded_mut::<NoPadding>(&mut buf[..len]) {
+            Ok(plain) => plain.len(),
+            // `len` is a 16-byte multiple, so NoPadding CBC decryption cannot
+            // fail; the arm keeps the reader panic-free if that ever changes.
+            Err(_) => len, // cov:unreachable: NoPadding CBC over a 16-byte-multiple slice cannot fail
+        }
     }
 
     /// Decrypt one sector of `cipher` at volume byte offset `byte_offset`.
     /// The sector length must be a non-zero multiple of 16.
     #[must_use]
     pub fn decrypt_sector(&self, cipher: &[u8], byte_offset: u64) -> Vec<u8> {
-        let iv = self.cbc_iv(byte_offset);
         let mut buf = cipher.to_vec();
-
-        // AES-CBC decrypt with the FVEK (no padding: sector is a 16-byte multiple).
-        let dec = cbc::Decryptor::<Aes128>::new(
-            GenericArray::from_slice(&self.fvek),
-            GenericArray::from_slice(&iv),
-        );
-        let len = buf.len() - (buf.len() % 16);
-        // Explicit `match` (not `if let`) so the unreachable Err arm is a named,
-        // panic-free defence carrying the coverage-gate marker.
-        #[allow(clippy::single_match)]
-        match dec.decrypt_padded_mut::<NoPadding>(&mut buf[..len]) {
-            Ok(plain) => {
-                let plain_len = plain.len();
-                // Method 0x8000 only: the Elephant Diffuser stage (Diffuser B,
-                // then A, then XOR the sector key). Method 0x8002 stops at the
-                // CBC plaintext above.
-                if let Some(tweak) = &self.tweak {
+        let iv = Self::le128(byte_offset);
+        match &self.transform {
+            SectorTransform::Cbc128 {
+                fvek,
+                fvek_ecb,
+                tweak,
+            } => {
+                let cbc_iv = Self::ecb(fvek_ecb, &iv);
+                let plain_len = Self::cbc_decrypt_inplace::<Aes128>(fvek, &cbc_iv, &mut buf);
+                // Method 0x8000 only: apply the Elephant Diffuser after CBC.
+                if let Some(tweak) = tweak {
                     let sector_key = Self::sector_key(tweak, byte_offset);
                     elephant_diffuser::decrypt(&mut buf[..plain_len], &sector_key);
                 }
             }
-            // `len` is a 16-byte multiple, so NoPadding CBC decryption cannot
-            // fail; the arm keeps the reader panic-free if that ever changes.
-            Err(_) => {} // cov:unreachable: NoPadding CBC over a 16-byte-multiple slice cannot fail
+            SectorTransform::Cbc256 { fvek, fvek_ecb } => {
+                let cbc_iv = Self::ecb(fvek_ecb, &iv);
+                let _ = Self::cbc_decrypt_inplace::<Aes256>(fvek, &cbc_iv, &mut buf);
+            }
         }
         buf
     }
@@ -236,22 +291,38 @@ impl SectorCipher {
     #[must_use]
     pub fn encrypt_sector(&self, plain: &[u8], byte_offset: u64) -> Vec<u8> {
         use aes::cipher::BlockEncryptMut;
-        let iv = self.cbc_iv(byte_offset);
         let mut buf = plain.to_vec();
-        if let Some(tweak) = &self.tweak {
-            let sector_key = Self::sector_key(tweak, byte_offset);
-            elephant_diffuser::encrypt(&mut buf, &sector_key);
-        }
-        let enc = cbc::Encryptor::<Aes128>::new(
-            GenericArray::from_slice(&self.fvek),
-            GenericArray::from_slice(&iv),
-        );
+        let iv = Self::le128(byte_offset);
         let len = buf.len() - (buf.len() % 16);
-        let out = enc
-            .encrypt_padded_mut::<NoPadding>(&mut buf[..len], len)
-            .unwrap()
-            .to_vec();
-        out
+        match &self.transform {
+            SectorTransform::Cbc128 {
+                fvek,
+                fvek_ecb,
+                tweak,
+            } => {
+                if let Some(tweak) = tweak {
+                    let sector_key = Self::sector_key(tweak, byte_offset);
+                    elephant_diffuser::encrypt(&mut buf, &sector_key);
+                }
+                let cbc_iv = Self::ecb(fvek_ecb, &iv);
+                cbc::Encryptor::<Aes128>::new(
+                    GenericArray::from_slice(fvek),
+                    GenericArray::from_slice(&cbc_iv),
+                )
+                .encrypt_padded_mut::<NoPadding>(&mut buf[..len], len)
+                .unwrap();
+            }
+            SectorTransform::Cbc256 { fvek, fvek_ecb } => {
+                let cbc_iv = Self::ecb(fvek_ecb, &iv);
+                cbc::Encryptor::<Aes256>::new(
+                    GenericArray::from_slice(fvek),
+                    GenericArray::from_slice(&cbc_iv),
+                )
+                .encrypt_padded_mut::<NoPadding>(&mut buf[..len], len)
+                .unwrap();
+            }
+        }
+        buf
     }
 }
 
@@ -309,8 +380,13 @@ mod tests {
 
     #[test]
     fn recovery_key_hash_rejects_malformed() {
-        // Wrong group count.
+        // Too few groups.
         assert!(recovery_key_hash("111111").is_err());
+        // Too many groups (9) — the in-loop `i >= 8` guard.
+        assert!(recovery_key_hash(
+            "111111-111111-111111-111111-111111-111111-111111-111111-111111"
+        )
+        .is_err());
         // Non-digit character.
         assert!(
             recovery_key_hash("111111-111111-111111-111111-111111-111111-111111-11111x").is_err()

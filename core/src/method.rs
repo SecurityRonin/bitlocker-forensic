@@ -49,6 +49,8 @@ pub enum SectorCipherKind {
     Cbc128Diffuser,
     /// AES-128-CBC, no diffuser (method 0x8002).
     Cbc128,
+    /// AES-256-CBC, no diffuser (method 0x8003).
+    Cbc256,
 }
 
 impl EncryptionMethod {
@@ -87,6 +89,7 @@ impl EncryptionMethod {
         match (self.mode, self.key_bits, self.diffuser) {
             (CipherMode::Cbc, 128, true) => Some(SectorCipherKind::Cbc128Diffuser),
             (CipherMode::Cbc, 128, false) => Some(SectorCipherKind::Cbc128),
+            (CipherMode::Cbc, 256, false) => Some(SectorCipherKind::Cbc256),
             _ => None,
         }
     }
@@ -123,7 +126,7 @@ mod tests {
     }
 
     #[test]
-    fn only_cbc128_kinds_are_validated() {
+    fn validated_kinds_match_oracle_backed_methods() {
         assert_eq!(
             EncryptionMethod::decode(0x8000).unwrap().validated_kind(),
             Some(SectorCipherKind::Cbc128Diffuser)
@@ -132,7 +135,12 @@ mod tests {
             EncryptionMethod::decode(0x8002).unwrap().validated_kind(),
             Some(SectorCipherKind::Cbc128)
         );
-        for raw in [0x8001u16, 0x8003, 0x8004, 0x8005] {
+        assert_eq!(
+            EncryptionMethod::decode(0x8003).unwrap().validated_kind(),
+            Some(SectorCipherKind::Cbc256)
+        );
+        // No oracle-backed decrypt yet: CBC-256+diffuser and both XTS methods.
+        for raw in [0x8001u16, 0x8004, 0x8005] {
             assert_eq!(
                 EncryptionMethod::decode(raw).unwrap().validated_kind(),
                 None,

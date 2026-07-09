@@ -187,14 +187,21 @@ fn derive_cipher(
         .ok_or(BdeError::MissingKeyMaterial { what: "FVEK entry" })?;
     let fvek_container = aes_ccm_unwrap(&vmk_key, &fvek_entry.data)
         .ok_or(BdeError::AuthenticationFailed { what: "FVEK" })?;
-    let fvek = take_key16(&fvek_container, 12, "FVEK")?;
 
     match kind {
         SectorCipherKind::Cbc128Diffuser => {
+            let fvek = take_key16(&fvek_container, 12, "FVEK")?;
             let tweak = take_key16(&fvek_container, 44, "FVEK")?;
             Ok(SectorCipher::new(fvek, tweak))
         }
-        SectorCipherKind::Cbc128 => Ok(SectorCipher::new_cbc(fvek)),
+        SectorCipherKind::Cbc128 => {
+            let fvek = take_key16(&fvek_container, 12, "FVEK")?;
+            Ok(SectorCipher::new_cbc(fvek))
+        }
+        SectorCipherKind::Cbc256 => {
+            let fvek = take_key32(&fvek_container, 12, "FVEK")?;
+            Ok(SectorCipher::new_cbc256(fvek))
+        }
     }
 }
 
@@ -766,11 +773,11 @@ mod tests {
 
     #[test]
     fn recognized_but_unvalidated_methods_refuse() {
-        // 0x8001 CBC-256+diffuser, 0x8003 CBC-256, 0x8004 XTS-128, 0x8005
-        // XTS-256 are recognized by the dispatch but have no Tier-1/2 oracle
-        // yet — they must refuse (naming the method), never by-construction
-        // decrypt. The refusal is gated before key derivation.
-        for m in [0x8001u16, 0x8003, 0x8004, 0x8005] {
+        // 0x8001 CBC-256+diffuser, 0x8004 XTS-128, 0x8005 XTS-256 are recognized
+        // by the dispatch but have no Tier-1/2 oracle yet — they must refuse
+        // (naming the method), never by-construction decrypt. The refusal is
+        // gated before key derivation. (0x8003 is now oracle-validated.)
+        for m in [0x8001u16, 0x8004, 0x8005] {
             let img = meta_only_image(m, &[0x2000], [0x1000, 0, 0], Some(0x1000));
             let res = BitLockerVolume::unlock_with_password(Cursor::new(img), "x");
             assert!(
