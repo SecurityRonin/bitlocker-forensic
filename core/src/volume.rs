@@ -202,6 +202,11 @@ fn derive_cipher(
             let fvek = take_key32(&fvek_container, 12, "FVEK")?;
             Ok(SectorCipher::new_cbc256(fvek))
         }
+        SectorCipherKind::Xts128 => {
+            // XTS-128 carries a 32-byte key (two AES-128 keys) at offset 12.
+            let fvek = take_key32(&fvek_container, 12, "FVEK")?;
+            Ok(SectorCipher::new_xts128(fvek))
+        }
     }
 }
 
@@ -858,11 +863,11 @@ mod tests {
 
     #[test]
     fn recognized_but_unvalidated_methods_refuse() {
-        // 0x8001 CBC-256+diffuser, 0x8004 XTS-128, 0x8005 XTS-256 are recognized
-        // by the dispatch but have no Tier-1/2 oracle yet — they must refuse
-        // (naming the method), never by-construction decrypt. The refusal is
-        // gated before key derivation. (0x8003 is now oracle-validated.)
-        for m in [0x8001u16, 0x8004, 0x8005] {
+        // 0x8001 CBC-256+diffuser and 0x8005 XTS-256 are recognized by the
+        // dispatch but have no Tier-1/2 oracle yet — they must refuse (naming
+        // the method), never by-construction decrypt. The refusal is gated
+        // before key derivation. (0x8003/0x8004 are now oracle-validated.)
+        for m in [0x8001u16, 0x8005] {
             let img = meta_only_image(m, &[0x2000], [0x1000, 0, 0], Some(0x1000));
             let res = BitLockerVolume::unlock_with_password(Cursor::new(img), "x");
             assert!(

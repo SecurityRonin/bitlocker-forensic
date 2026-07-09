@@ -1,4 +1,4 @@
-//! Tier-1 oracle: unlock the BelkaCTF #6 `vault.raw` BitLocker volume (method
+//! Tier-1 oracle: unlock the `BelkaCTF` #6 `vault.raw` BitLocker volume (method
 //! `0x8004`, XTS-AES-128) with its **published recovery password** and confirm
 //! the decrypted sectors match `pybde` byte-for-byte (SHA-256).
 //!
@@ -78,7 +78,7 @@ fn tier1_vault_xts128_matches_pybde() {
             "b525ecbce7a22825746e9f938498131c3c8d99a22e5c9a47294be43c35a0748d",
         ),
         (
-            262144,
+            262_144,
             "999e459d1b2996dc8bc0826d0ef2e6521c3a8636b8f58a6c5ba192961f674f4a",
         ),
     ];

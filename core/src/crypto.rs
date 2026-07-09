@@ -17,6 +17,7 @@ use ccm::aead::AeadInPlace;
 use ccm::consts::{U12, U16};
 use ccm::{Ccm, KeyInit as CcmKeyInit};
 use sha2::{Digest, Sha256};
+use xts_mode::{get_tweak_default, Xts128 as XtsCipher};
 
 /// Number of key-stretch iterations (`0x100000`), per the BDE format.
 const STRETCH_ITERATIONS: u64 = 0x0010_0000;
@@ -159,6 +160,8 @@ enum SectorTransform {
     },
     /// AES-256-CBC, no diffuser (method 0x8003).
     Cbc256 { fvek: [u8; 32], fvek_ecb: Aes256 },
+    /// XTS-AES-128, tweak = sector number (method 0x8004).
+    Xts128 { xts: XtsCipher<Aes128> },
 }
 
 /// The volume sector cipher: a validated [`SectorTransform`] plus the read-path
@@ -202,6 +205,19 @@ impl SectorCipher {
             transform: SectorTransform::Cbc256 {
                 fvek,
                 fvek_ecb: Aes256::new(GenericArray::from_slice(&fvek)),
+            },
+        }
+    }
+
+    /// Build a method-0x8004 cipher (XTS-AES-128) from the 32-byte FVEK: the
+    /// first 16 bytes key the data cipher, the next 16 the tweak cipher.
+    #[must_use]
+    pub fn new_xts128(fvek: [u8; 32]) -> SectorCipher {
+        let data = Aes128::new(GenericArray::from_slice(&fvek[0..16]));
+        let tweak = Aes128::new(GenericArray::from_slice(&fvek[16..32]));
+        SectorCipher {
+            transform: SectorTransform::Xts128 {
+                xts: XtsCipher::new(data, tweak),
             },
         }
     }
@@ -281,6 +297,15 @@ impl SectorCipher {
                 let cbc_iv = Self::ecb(fvek_ecb, &iv);
                 let _ = Self::cbc_decrypt_inplace::<Aes256>(fvek, &cbc_iv, &mut buf);
             }
+            SectorTransform::Xts128 { xts } => {
+                // XTS data unit = the 512-byte sector; tweak = the sector number.
+                // The 16-byte-block guard keeps the panic-free contract if a
+                // caller ever passes a sub-block slice (the read path never does).
+                if buf.len() >= 16 {
+                    let tweak = get_tweak_default(u128::from(byte_offset / 512));
+                    xts.decrypt_sector(&mut buf, tweak);
+                }
+            }
         }
         buf
     }
@@ -320,6 +345,10 @@ impl SectorCipher {
                 )
                 .encrypt_padded_mut::<NoPadding>(&mut buf[..len], len)
                 .unwrap();
+            }
+            SectorTransform::Xts128 { xts } => {
+                let tweak = get_tweak_default(u128::from(byte_offset / 512));
+                xts.encrypt_sector(&mut buf, tweak);
             }
         }
         buf

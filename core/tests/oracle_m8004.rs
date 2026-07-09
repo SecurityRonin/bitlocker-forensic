@@ -1,6 +1,6 @@
 //! Tier-2 cross-check: unlock the self-minted `m8004.raw` image (method
 //! `0x8004`, XTS-AES-128) with its recovery password and confirm the decrypted
-//! sectors match `pybde` (SHA-256). Complements the Tier-1 BelkaCTF vault oracle
+//! sectors match `pybde` (SHA-256). Complements the Tier-1 `BelkaCTF` vault oracle
 //! (`oracle_vault.rs`) at a different partition offset.
 //!
 //! Env-gated on `BDE_MINT_ORACLE_DIR` (the directory holding `m8004.raw`).

@@ -24,6 +24,9 @@ aes  = "0.8"
 cbc  = "0.1"
 ccm  = "0.5"
 sha2 = "0.10"
+# XTS-AES sector mode (methods 0x8004/0x8005). 0.5.x tracks cipher 0.4 / aes 0.8;
+# 0.6+ jumps to cipher 0.5 / aes 0.9, incompatible with our stack.
+xts-mode = "0.5"
 # The one exception (no ecosystem crate exists): our own Elephant Diffuser,
 # extracted from this repo's crypto layer and validated in situ by the Tier-1
 # oracle. Path dep during dev; the registry version is used for publish.
