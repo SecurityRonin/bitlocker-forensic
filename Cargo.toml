@@ -28,9 +28,8 @@ sha2 = "0.10"
 # 0.6+ jumps to cipher 0.5 / aes 0.9, incompatible with our stack.
 xts-mode = "0.5"
 # The one exception (no ecosystem crate exists): our own Elephant Diffuser,
-# extracted from this repo's crypto layer and validated in situ by the Tier-1
-# oracle. Path dep during dev; the registry version is used for publish.
-elephant-diffuser = { version = "0.1", path = "../elephant-diffuser" }
+# extracted from this repo's crypto layer and validated in situ by the Tier-1 oracle.
+elephant-diffuser = "0.1"
 # REUSE, don't reinvent calendar math: jiff renders FILETIME as RFC 3339.
 jiff = "0.2"
 bitlocker = { version = "0.2", path = "core", package = "bitlocker-core" }
