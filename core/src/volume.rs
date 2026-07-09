@@ -12,8 +12,9 @@ use crate::crypto::{aes_ccm_unwrap, password_hash, recovery_key_hash, stretch_ke
 use crate::error::{BdeError, Result};
 use crate::header::VolumeHeader;
 use crate::metadata::{
-    FveMetadata, PROTECTION_CLEAR, PROTECTION_PASSWORD, PROTECTION_RECOVERY, VALUE_TYPE_AES_CCM,
-    VALUE_TYPE_KEY, VALUE_TYPE_STRETCH,
+    FveMetadata, MetadataEntry, PROTECTION_CLEAR, PROTECTION_PASSWORD, PROTECTION_RECOVERY,
+    PROTECTION_STARTUP_KEY, VALUE_TYPE_AES_CCM, VALUE_TYPE_EXTERNAL_KEY, VALUE_TYPE_KEY,
+    VALUE_TYPE_STRETCH,
 };
 use crate::method::{EncryptionMethod, SectorCipherKind};
 
@@ -125,15 +126,16 @@ impl BitLockerVolume {
     /// otherwise the same failures as [`Self::unlock_with_password`] (non-BitLocker
     /// image, unsupported/unvalidated cipher, absent key material, or a wrong key).
     pub fn unlock_with_startup_key<R: Read + Seek>(
-        mut reader: R,
+        reader: R,
         startup_key: &[u8],
     ) -> Result<DecryptedVolume<R>> {
-        // RED stub: startup-key unlock is not implemented yet.
-        let _ = startup_key;
-        Self::read_metadata(&mut reader)?;
-        Err(BdeError::AuthenticationFailed {
-            what: "startup key (unimplemented)",
-        })
+        let external_key = parse_startup_key(startup_key)?;
+        Self::unlock(
+            reader,
+            PROTECTION_STARTUP_KEY,
+            "startup key",
+            &VmkUnwrap::External(external_key),
+        )
     }
 
     /// Shared unlock path: parse metadata, gate the cipher method, derive the
@@ -177,6 +179,37 @@ enum VmkUnwrap {
     /// Read the clear key stored in the VMK's KEY property — no credential, no
     /// stretch (clear-key protector `0x0000`).
     Clear,
+    /// Use this 256-bit external key (parsed from a startup-key `.BEK`) directly
+    /// as the AES-CCM key that unwraps the VMK — no credential, no stretch, no
+    /// stored key (startup-key protector `0x0200`).
+    External([u8; 32]),
+}
+
+/// Extract the 256-bit external key from a startup-key `.BEK` file.
+///
+/// The `.BEK` is a 48-byte FVE metadata header followed by an external-key entry
+/// (value type `0x0009`) whose payload is a 16-byte key GUID, an 8-byte FILETIME,
+/// then nested entries — one of which is a KEY property (`0x0001`: a 4-byte
+/// key-type then the raw 32-byte external key). Bounds-checked throughout: a
+/// truncated or malformed `.BEK` yields a loud error, never a panic.
+fn parse_startup_key(bek: &[u8]) -> Result<[u8; 32]> {
+    let body = bek.get(48..).unwrap_or_default();
+    let external = MetadataEntry::parse_sequence(body)
+        .into_iter()
+        .find(|e| e.value_type == VALUE_TYPE_EXTERNAL_KEY)
+        .ok_or(BdeError::MissingKeyMaterial {
+            what: "external key",
+        })?;
+    // The external-key payload is a 16-byte key GUID + 8-byte FILETIME, then the
+    // nested entries hold the KEY property with the raw 32-byte key.
+    let key = external
+        .nested(24)
+        .into_iter()
+        .find(|e| e.value_type == VALUE_TYPE_KEY)
+        .ok_or(BdeError::MissingKeyMaterial {
+            what: "external key property",
+        })?;
+    take_key32(&key.data, 4, "external key")
 }
 
 /// Derive the sector cipher from the VMK protected by `protector_type`, obtaining
@@ -238,6 +271,8 @@ fn derive_cipher(
                 .ok_or(BdeError::MissingKeyMaterial { what: "clear key" })?;
             take_key32(&key.data, 4, "clear")?
         }
+        // The external key from the .BEK is the AES-CCM unwrap key directly.
+        VmkUnwrap::External(key) => *key,
     };
 
     let vmk_container =
@@ -1129,6 +1164,21 @@ mod tests {
         assert!(matches!(
             res,
             Err(BdeError::MissingKeyMaterial { what }) if what == "external key"
+        ));
+    }
+
+    #[test]
+    fn startup_key_external_key_without_key_property_errors() {
+        // A .BEK whose external-key entry carries no nested KEY property.
+        let (image, _, _) = build_startupkey_volume();
+        // External-key entry payload: 16-byte GUID + 8-byte FILETIME, no nested KEY.
+        let ext_entry = entry(0, crate::metadata::VALUE_TYPE_EXTERNAL_KEY, &[0u8; 24]);
+        let mut bek = vec![0u8; 48];
+        bek.extend_from_slice(&ext_entry);
+        let res = BitLockerVolume::unlock_with_startup_key(Cursor::new(image), &bek);
+        assert!(matches!(
+            res,
+            Err(BdeError::MissingKeyMaterial { what }) if what == "external key property"
         ));
     }
 
