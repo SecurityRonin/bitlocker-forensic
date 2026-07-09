@@ -12,7 +12,8 @@ use crate::crypto::{aes_ccm_unwrap, password_hash, recovery_key_hash, stretch_ke
 use crate::error::{BdeError, Result};
 use crate::header::VolumeHeader;
 use crate::metadata::{
-    FveMetadata, PROTECTION_PASSWORD, PROTECTION_RECOVERY, VALUE_TYPE_AES_CCM, VALUE_TYPE_STRETCH,
+    FveMetadata, PROTECTION_CLEAR, PROTECTION_PASSWORD, PROTECTION_RECOVERY, VALUE_TYPE_AES_CCM,
+    VALUE_TYPE_KEY, VALUE_TYPE_STRETCH,
 };
 use crate::method::{EncryptionMethod, SectorCipherKind};
 
@@ -68,11 +69,11 @@ impl BitLockerVolume {
         reader: R,
         password: &str,
     ) -> Result<DecryptedVolume<R>> {
-        Self::unlock_with_protector(
+        Self::unlock(
             reader,
             PROTECTION_PASSWORD,
             "password",
-            password_hash(password),
+            &VmkUnwrap::Stretch(password_hash(password)),
         )
     }
 
@@ -91,16 +92,35 @@ impl BitLockerVolume {
     ) -> Result<DecryptedVolume<R>> {
         let key_hash = recovery_key_hash(recovery)
             .map_err(|reason| BdeError::InvalidRecoveryPassword { reason })?;
-        Self::unlock_with_protector(reader, PROTECTION_RECOVERY, "recovery password", key_hash)
+        Self::unlock(
+            reader,
+            PROTECTION_RECOVERY,
+            "recovery password",
+            &VmkUnwrap::Stretch(key_hash),
+        )
+    }
+
+    /// Unlock the volume with **no credential** via its clear-key protector
+    /// (`0x0000`), returning a plaintext view. A clear-key protector stores the
+    /// VMK unprotected — BitLocker adds it when protection is *suspended* — so the
+    /// clear key held in the VMK's KEY property unwraps the VMK directly, with no
+    /// stretch and no external key. A clear-key volume is effectively unencrypted.
+    ///
+    /// # Errors
+    /// [`BdeError::NoUnlockProtector`] if the volume carries no clear-key protector;
+    /// otherwise the same failures as [`Self::unlock_with_password`] (non-BitLocker
+    /// image, unsupported/unvalidated cipher, absent key material, or a wrong key).
+    pub fn unlock_clear_key<R: Read + Seek>(reader: R) -> Result<DecryptedVolume<R>> {
+        Self::unlock(reader, PROTECTION_CLEAR, "clear key", &VmkUnwrap::Clear)
     }
 
     /// Shared unlock path: parse metadata, gate the cipher method, derive the
     /// sector cipher from the given protector, and return the plaintext view.
-    fn unlock_with_protector<R: Read + Seek>(
+    fn unlock<R: Read + Seek>(
         mut reader: R,
         protector_type: u16,
         protector_name: &'static str,
-        key_hash: [u8; 32],
+        unwrap: &VmkUnwrap,
     ) -> Result<DecryptedVolume<R>> {
         let metadata = Self::read_metadata(&mut reader)?;
 
@@ -114,7 +134,7 @@ impl BitLockerVolume {
             .validated_kind()
             .ok_or(BdeError::UnvalidatedEncryptionMethod { method: raw })?;
 
-        let cipher = derive_cipher(&metadata, kind, protector_type, protector_name, &key_hash)?;
+        let cipher = derive_cipher(&metadata, kind, protector_type, protector_name, unwrap)?;
         let total_size = reader.seek(SeekFrom::End(0))?;
 
         Ok(DecryptedVolume {
@@ -127,16 +147,26 @@ impl BitLockerVolume {
     }
 }
 
-/// Derive the sector cipher from the VMK protected by `protector_type`, using
-/// `key_hash` as the stretch input, and build the transform for the
-/// already-validated `kind`. `protector_name` names the protector in the
-/// not-found error.
+/// How the AES-CCM key that unwraps the VMK is obtained.
+enum VmkUnwrap {
+    /// Stretch this credential hash with the VMK's stretch-key salt (password /
+    /// recovery-password protector).
+    Stretch([u8; 32]),
+    /// Read the clear key stored in the VMK's KEY property — no credential, no
+    /// stretch (clear-key protector `0x0000`).
+    Clear,
+}
+
+/// Derive the sector cipher from the VMK protected by `protector_type`, obtaining
+/// the VMK's AES-CCM unwrap key per `unwrap` (stretch a credential, or read the
+/// stored clear key), and build the transform for the already-validated `kind`.
+/// `protector_name` names the protector in the not-found error.
 fn derive_cipher(
     metadata: &FveMetadata,
     kind: SectorCipherKind,
     protector_type: u16,
     protector_name: &'static str,
-    key_hash: &[u8; 32],
+    unwrap: &VmkUnwrap,
 ) -> Result<SectorCipher> {
     // 1. Locate the VMK for the requested protector.
     let vmk = metadata
@@ -149,12 +179,6 @@ fn derive_cipher(
 
     // VMK properties are nested entries starting at value-data offset 28.
     let props = vmk.nested(28);
-    let stretch = props
-        .iter()
-        .find(|e| e.value_type == VALUE_TYPE_STRETCH)
-        .ok_or(BdeError::MissingKeyMaterial {
-            what: "stretch key",
-        })?;
     let vmk_ccm = props
         .iter()
         .find(|e| e.value_type == VALUE_TYPE_AES_CCM)
@@ -162,20 +186,40 @@ fn derive_cipher(
             what: "VMK AES-CCM key",
         })?;
 
-    // Salt is at stretch value-data offset 4 (after the 4-byte method).
-    let mut salt = [0u8; 16];
-    let salt_src = stretch
-        .data
-        .get(4..20)
-        .ok_or(BdeError::MissingKeyMaterial {
-            what: "stretch salt",
-        })?;
-    salt.copy_from_slice(salt_src);
+    // 2. Obtain the 32-byte key that AES-CCM-unwraps the VMK: stretch the
+    //    credential with the VMK's stretch-key salt, or read the clear key stored
+    //    in the VMK's KEY property (clear-key protector — no credential).
+    let unwrap_key = match unwrap {
+        VmkUnwrap::Stretch(key_hash) => {
+            let stretch = props
+                .iter()
+                .find(|e| e.value_type == VALUE_TYPE_STRETCH)
+                .ok_or(BdeError::MissingKeyMaterial {
+                    what: "stretch key",
+                })?;
+            // Salt is at stretch value-data offset 4 (after the 4-byte method).
+            let mut salt = [0u8; 16];
+            let salt_src = stretch
+                .data
+                .get(4..20)
+                .ok_or(BdeError::MissingKeyMaterial {
+                    what: "stretch salt",
+                })?;
+            salt.copy_from_slice(salt_src);
+            stretch_key(key_hash, &salt)
+        }
+        VmkUnwrap::Clear => {
+            // FVE KEY property: a 4-byte method, then the 32-byte clear key.
+            let key = props
+                .iter()
+                .find(|e| e.value_type == VALUE_TYPE_KEY)
+                .ok_or(BdeError::MissingKeyMaterial { what: "clear key" })?;
+            take_key32(&key.data, 4, "clear")?
+        }
+    };
 
-    // 2. Key hash -> stretched key -> unwrap the VMK.
-    let stretched = stretch_key(key_hash, &salt);
     let vmk_container =
-        aes_ccm_unwrap(&stretched, &vmk_ccm.data).ok_or(BdeError::AuthenticationFailed {
+        aes_ccm_unwrap(&unwrap_key, &vmk_ccm.data).ok_or(BdeError::AuthenticationFailed {
             what: "volume master key",
         })?;
     let vmk_key = take_key32(&vmk_container, 12, "volume master key")?;
