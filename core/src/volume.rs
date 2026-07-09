@@ -114,6 +114,28 @@ impl BitLockerVolume {
         Self::unlock(reader, PROTECTION_CLEAR, "clear key", &VmkUnwrap::Clear)
     }
 
+    /// Unlock the volume with a startup-key (`.BEK`) external key, returning a
+    /// plaintext view. `startup_key` is the raw bytes of the `.BEK` file. Uses the
+    /// startup-key protector (`0x0200`): the 256-bit external key held in the
+    /// `.BEK` AES-CCM-unwraps the VMK directly — no stretch, no password.
+    ///
+    /// # Errors
+    /// [`BdeError::MissingKeyMaterial`] if the `.BEK` carries no external key,
+    /// [`BdeError::NoUnlockProtector`] if the volume has no startup-key protector;
+    /// otherwise the same failures as [`Self::unlock_with_password`] (non-BitLocker
+    /// image, unsupported/unvalidated cipher, absent key material, or a wrong key).
+    pub fn unlock_with_startup_key<R: Read + Seek>(
+        mut reader: R,
+        startup_key: &[u8],
+    ) -> Result<DecryptedVolume<R>> {
+        // RED stub: startup-key unlock is not implemented yet.
+        let _ = startup_key;
+        Self::read_metadata(&mut reader)?;
+        Err(BdeError::AuthenticationFailed {
+            what: "startup key (unimplemented)",
+        })
+    }
+
     /// Shared unlock path: parse metadata, gate the cipher method, derive the
     /// sector cipher from the given protector, and return the plaintext view.
     fn unlock<R: Read + Seek>(
@@ -984,6 +1006,129 @@ mod tests {
         assert!(matches!(
             res,
             Err(BdeError::MissingKeyMaterial { what }) if what == "clear key"
+        ));
+    }
+
+    /// Build a `.BEK` startup-key file byte blob carrying `external_key`, in the
+    /// libbde external-key layout: a 48-byte FVE metadata header, then an
+    /// external-key entry (value type 0x0009) whose payload is a 16-byte key GUID +
+    /// 8-byte FILETIME followed by a nested KEY property (0x0001: `type(u32)@0` then
+    /// the 32-byte key).
+    fn build_bek(external_key: &[u8; 32]) -> Vec<u8> {
+        let mut key_data = vec![0u8; 4]; // 4-byte key type
+        key_data.extend_from_slice(external_key);
+        let key_entry = entry(0, VALUE_TYPE_KEY, &key_data);
+
+        let mut ext_data = vec![0u8; 24]; // 16-byte key GUID + 8-byte FILETIME
+        ext_data.extend_from_slice(&key_entry);
+        let ext_entry = entry(0, crate::metadata::VALUE_TYPE_EXTERNAL_KEY, &ext_data);
+
+        let mut bek = vec![0u8; 48]; // FVE metadata header
+        bek.extend_from_slice(&ext_entry);
+        bek
+    }
+
+    /// Build a synthetic method-0x8004 startup-key (protector 0x0200) volume plus
+    /// the plaintext of its relocated first sector and the matching `.BEK` bytes.
+    /// The VMK is AES-CCM-wrapped directly by the 256-bit external key (no stretch,
+    /// no KEY property in the VMK — the key lives in the `.BEK`).
+    fn build_startupkey_volume() -> (Vec<u8>, [u8; 512], Vec<u8>) {
+        let external_key = [0x9au8; 32];
+        let xts_key = [0x35u8; 32];
+        let vmk = [0x4au8; 32];
+
+        let mut vmk_container = vec![0u8; 44];
+        vmk_container[12..44].copy_from_slice(&vmk);
+        // The external key unwraps the VMK directly — no stretch stage.
+        let vmk_ccm = aes_ccm_wrap(&external_key, &[0x5c; 12], &vmk_container);
+
+        let mut fvek_container = vec![0u8; 76];
+        fvek_container[12..44].copy_from_slice(&xts_key);
+        let fvek_ccm = aes_ccm_wrap(&vmk, &[0x6d; 12], &fvek_container);
+
+        let vmk_ccm_entry = entry(0, VALUE_TYPE_AES_CCM, &vmk_ccm);
+
+        let mut vmk_data = vec![0u8; 28];
+        vmk_data[26..28].copy_from_slice(&crate::metadata::PROTECTION_STARTUP_KEY.to_le_bytes());
+        vmk_data.extend_from_slice(&vmk_ccm_entry);
+        let vmk_entry = entry(ENTRY_TYPE_VMK, VALUE_TYPE_VMK, &vmk_data);
+
+        let fvek_entry = entry(ENTRY_TYPE_FVEK, VALUE_TYPE_AES_CCM, &fvek_ccm);
+
+        let mut vh_data = Vec::new();
+        vh_data.extend_from_slice(&RELOCATED_OFFSET.to_le_bytes());
+        vh_data.extend_from_slice(&512u64.to_le_bytes());
+        let vh_entry = entry(ENTRY_TYPE_VOLUME_HEADER, ENTRY_TYPE_VOLUME_HEADER, &vh_data);
+
+        let mut entries = Vec::new();
+        entries.extend_from_slice(&vh_entry);
+        entries.extend_from_slice(&vmk_entry);
+        entries.extend_from_slice(&fvek_entry);
+        let metadata_size = 48 + entries.len();
+
+        let mut image = vec![0u8; IMAGE_SIZE];
+        image[0..3].copy_from_slice(&[0xeb, 0x58, 0x90]);
+        image[3..11].copy_from_slice(b"MSWIN4.1");
+        image[12] = 0x02;
+        image[440..448].copy_from_slice(&META_BLOCK_OFFSET.to_le_bytes());
+
+        let mb = META_BLOCK_OFFSET as usize;
+        image[mb..mb + 8].copy_from_slice(b"-FVE-FS-");
+        image[mb + 10..mb + 12].copy_from_slice(&2u16.to_le_bytes());
+        image[mb + 16..mb + 24].copy_from_slice(&ENCRYPTED_SIZE.to_le_bytes());
+        image[mb + 28..mb + 32].copy_from_slice(&1u32.to_le_bytes());
+        image[mb + 32..mb + 40].copy_from_slice(&META_BLOCK_OFFSET.to_le_bytes());
+        image[mb + 56..mb + 64].copy_from_slice(&RELOCATED_OFFSET.to_le_bytes());
+        image[mb + 64..mb + 68].copy_from_slice(&(metadata_size as u32).to_le_bytes());
+        image[mb + 64 + 36..mb + 64 + 38].copy_from_slice(&0x8004u16.to_le_bytes());
+        image[mb + 64 + 48..mb + 64 + 48 + entries.len()].copy_from_slice(&entries);
+
+        let mut plain = [0u8; 512];
+        for (i, b) in plain.iter_mut().enumerate() {
+            *b = (i as u8) ^ 0x2e;
+        }
+        let ct = SectorCipher::new_xts128(xts_key).encrypt_sector(&plain, RELOCATED_OFFSET);
+        let ro = RELOCATED_OFFSET as usize;
+        image[ro..ro + 512].copy_from_slice(&ct);
+
+        (image, plain, build_bek(&external_key))
+    }
+
+    #[test]
+    fn unlock_and_read_synthetic_startupkey_volume() {
+        // Startup-key (.BEK) unlock over a synthetic 0x8004 volume: the VMK is
+        // wrapped directly by the 256-bit external key held in the .BEK. Tier-3
+        // self-consistency for the startup-key wiring; the Tier-2 proof is the
+        // pybde-verified oracle (tests/oracle_startupkey.rs).
+        let (image, plain, bek) = build_startupkey_volume();
+        let mut vol = BitLockerVolume::unlock_with_startup_key(Cursor::new(image), &bek).unwrap();
+        let mut buf = [0u8; 512];
+        vol.read_at(0, &mut buf).unwrap();
+        assert_eq!(buf, plain);
+        assert_eq!(vol.metadata().encryption_method, 0x8004);
+    }
+
+    #[test]
+    fn no_startup_key_protector_errors() {
+        // A password-only volume has no startup-key protector to unlock with.
+        let (image, _) = build_volume("test-pw");
+        let (_, _, bek) = build_startupkey_volume();
+        let res = BitLockerVolume::unlock_with_startup_key(Cursor::new(image), &bek);
+        assert!(matches!(
+            res,
+            Err(BdeError::NoUnlockProtector { protector, .. }) if protector == "startup key"
+        ));
+    }
+
+    #[test]
+    fn startup_key_without_external_key_errors() {
+        // A .BEK with no external-key entry cannot yield the unwrap key.
+        let (image, _, _) = build_startupkey_volume();
+        let empty_bek = vec![0u8; 48]; // header only, no external-key entry
+        let res = BitLockerVolume::unlock_with_startup_key(Cursor::new(image), &empty_bek);
+        assert!(matches!(
+            res,
+            Err(BdeError::MissingKeyMaterial { what }) if what == "external key"
         ));
     }
 
