@@ -469,4 +469,16 @@ mod tests {
         assert_ne!(ct, plain);
         assert_eq!(cipher.decrypt_sector(&ct, off), plain);
     }
+
+    #[test]
+    fn sector_cipher_xts128_roundtrip() {
+        // Method 0x8004: XTS-AES-128 (Tier-3 self-consistency; the Tier-1 proof
+        // is oracle_vault.rs / oracle_m8004.rs).
+        let cipher = SectorCipher::new_xts128([0x35; 32]);
+        let plain = sample_sector();
+        let off = 0x0211_0800u64;
+        let ct = cipher.encrypt_sector(&plain, off);
+        assert_ne!(ct, plain);
+        assert_eq!(cipher.decrypt_sector(&ct, off), plain);
+    }
 }
