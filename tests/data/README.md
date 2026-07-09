@@ -55,3 +55,55 @@ To run the method-`0x8002` Tier-1 test:
 BDE_CBC2_ORACLE=/path/to/bitlocker-1.dd \
   cargo test -p bitlocker-core --test oracle_bitlocker1 -- --nocapture
 ```
+
+#### vault.raw (BelkaCTF6)
+
+- **Source**: BelkaCTF #6 "Bogus Bill" (2024, Belkasoft + TODO:security). The
+  BitLocker `vault.vhdx` is stored as an NTFS alternate data stream
+  `\Users\phorger\Documents\desktop.ini:vault.vhdx` on the challenge laptop image
+  (`BelkaCTF_6_CASE240405_LAPTOP.E01`..`.E06`); `qemu-img convert` → `vault.raw`.
+- **Download**: <https://dl.ctf.do/BelkaCTF_6_CASE240405_FILE2.zip> (9.07 GB,
+  archive password `RJtWAZfsB1wMCNDebVWY` → nested zip → 6-segment LAPTOP E01).
+- **md5** (`vault.raw`): `faac779e252ee133b48f26c878168467`
+- **Size**: 2 GiB (GPT disk); BitLocker volume at **byte offset 16777216**.
+- **License / redistribution**: Belkasoft CTF material — **treat as NOT freely
+  redistributable**. Provenance + re-download steps only; bytes **not committed**.
+- **Identity / contents**: method `0x8004` (XTS-AES-128). Protectors: password
+  (`0x2000`, value unpublished) + recovery password (`0x0800`). Decrypted sector 0
+  is a valid NTFS boot sector.
+- **Published key**: recovery password
+  `590238-514580-359986-088242-029766-319495-410509-636911` (official write-up).
+- **Used by**: `core/tests/oracle_vault.rs` (env var `BDE_XTS_ORACLE` = path to
+  `vault.raw`). Ground-truth SHA-256 digests self-derived with `pybde` 20240502 —
+  see `docs/validation.md`.
+
+#### m8003.raw / m8004.raw / m8005.raw (self-minted Tier-2)
+
+- **Source**: SELF-MINTED on a Parallels "Windows 11" Pro guest with `manage-bde`
+  (`-UsedSpaceOnly -SkipHardwareTest -RecoveryPassword`, recovery-password
+  protector only), one 128 MiB fixed VHDX per remaining cipher; `qemu-img
+  convert` → raw. Independently decrypted by `pybde` on the host (Tier-2 oracle).
+- **md5**: m8003 `8dd5d8713474aaf1e627aea1de5ac66f`, m8004
+  `37abadef78b7988ce2c838fc517afbd8`, m8005 `409ec5dc12e144978c7b97842079089f`.
+- **Size**: 128 MiB each (MBR, one NTFS partition at **byte offset 65536**).
+- **License / redistribution**: we authored them ⇒ redistributable, but **not
+  committed** (size) — documented for provenance; re-mint per the ground-truth
+  notes in `/tmp/bde-mint-oracle/GROUND-TRUTH.md`.
+- **Identity / contents**: `m8003` = method `0x8003` (AES-256-CBC); `m8004` =
+  `0x8004` (XTS-AES-128); `m8005` = `0x8005` (XTS-AES-256). Each decrypts to a
+  valid NTFS volume.
+- **Published keys** (recovery passwords): m8003
+  `068002-479633-277629-623568-540826-435039-327756-375705`; m8004
+  `435743-601942-557051-719587-168388-130592-218053-447194`; m8005
+  `031174-056914-397793-502348-055847-196306-284306-262174`.
+- **Used by**: `core/tests/oracle_m8003.rs` / `oracle_m8004.rs` /
+  `oracle_m8005.rs` (env var `BDE_MINT_ORACLE_DIR` = the directory holding them).
+
+To run the AES-256-CBC / XTS Tier-1/2 tests:
+
+```bash
+BDE_XTS_ORACLE=/tmp/bde-xts-oracle/vault.raw \
+  cargo test -p bitlocker-core --test oracle_vault -- --nocapture
+BDE_MINT_ORACLE_DIR=/tmp/bde-mint-oracle \
+  cargo test -p bitlocker-core --test oracle_m8003 --test oracle_m8004 --test oracle_m8005
+```

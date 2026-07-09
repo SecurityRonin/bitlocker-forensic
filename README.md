@@ -17,8 +17,8 @@ from-scratch, pure-Rust BitLocker (BDE) decryptor, validated byte-for-byte
 against `pybde` on real disk images.**
 
 No `dislocker` C dependency, no FUSE, no mounting: one library that parses the
-FVE metadata, derives the keys from a password, and decrypts sectors
-(AES-128-CBC, with or without the Elephant Diffuser).
+FVE metadata, derives the keys from a password or recovery password, and
+decrypts sectors — AES-CBC (± Elephant Diffuser) and AES-XTS, 128- and 256-bit.
 
 ```rust,ignore
 use std::fs::File;
@@ -35,21 +35,25 @@ assert_eq!(&boot[3..11], b"MSWIN4.1");
 
 ## Scope
 
-This build unlocks the **password** protector (`0x2000`) and decrypts two
-ciphers, each validated by a **Tier-1 oracle**:
+This build unlocks the **password** (`0x2000`) and **recovery-password**
+(`0x0800`) protectors and decrypts **five of the six** BitLocker ciphers, each
+validated against a `pybde` oracle:
 
-| Method | Cipher | Tier-1 oracle |
+| Method | Cipher | Oracle (tier) |
 |---|---|---|
-| `0x8000` | AES-128-CBC + Elephant Diffuser | dfvfs `bdetogo.raw` (`pybde`) |
-| `0x8002` | AES-128-CBC (no diffuser) | picoCTF 2025 `bitlocker-1.dd` (`pybde`) |
+| `0x8000` | AES-128-CBC + Elephant Diffuser | dfvfs `bdetogo.raw` (Tier-1) |
+| `0x8002` | AES-128-CBC | picoCTF 2025 `bitlocker-1.dd` (Tier-1) |
+| `0x8003` | AES-256-CBC | self-minted `m8003` (Tier-2) |
+| `0x8004` | XTS-AES-128 | BelkaCTF6 `vault` (Tier-1) + `m8004` (Tier-2) |
+| `0x8005` | XTS-AES-256 | self-minted `m8005` (Tier-2) |
 
-The dispatch decodes all six ciphers (`0x8000`–`0x8005`) into their axes, but
-only ships a decrypt for a cipher once a real oracle validates it. AES-256-CBC
-(`0x8001`/`0x8003`) and AES-XTS (`0x8004`/`0x8005`) are **recognized and refused
-with a named error** — never decrypted by construction — so they light up as a
-one-line change plus a test the moment each gets an oracle. Recovery-password,
-startup-key, and TPM protectors are likewise out of scope for *unlock*, but the
-metadata parser still **reports** every protector and cipher it finds. See
+The dispatch decodes all six ciphers (`0x8000`–`0x8005`) into their axes and
+ships a decrypt for a cipher only once a real oracle validates it. The remaining
+method, AES-256-CBC + Elephant Diffuser (`0x8001`), is **recognized and refused
+with a named error** — never decrypted by construction — so it lights up as a
+one-line change plus a test the moment it gets an oracle. Startup-key and TPM
+protectors are out of scope for *unlock*, but the metadata parser still
+**reports** every protector and cipher it finds. See
 [`docs/RESEARCH.md`](docs/RESEARCH.md).
 
 ## The two-crate split
@@ -58,7 +62,7 @@ Following the fleet reader/analyzer standard:
 
 | Crate | Role | Emits |
 |---|---|---|
-| **`bitlocker-core`** | reader / decryptor (`aes` · `cbc` · `ccm` · `sha2`) | plaintext `Read + Seek` view + typed FVE metadata |
+| **`bitlocker-core`** | reader / decryptor (`aes` · `cbc` · `ccm` · `xts-mode` · `sha2`) | plaintext `Read + Seek` view + typed FVE metadata |
 | **`bitlocker-forensic`** | anomaly analyzer over the metadata | graded `forensicnomicon::report` `Finding`s |
 
 ### Analyzer findings

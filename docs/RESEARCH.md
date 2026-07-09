@@ -59,11 +59,19 @@ offset+size.
 ### Encryption methods (metadata header @36, u16)
 
 `0x8000` AES-128-CBC + Elephant Diffuser **(this build)** · `0x8001` AES-256-CBC +
-diffuser · `0x8002` AES-128-CBC no diffuser **(this build)** / `0x8003`
-AES-256-CBC no diffuser · `0x8004/0x8005` AES-XTS 128/256 · `0x2000…` AES-CCM
-(key data).
+diffuser · `0x8002` AES-128-CBC no diffuser **(this build)** · `0x8003`
+AES-256-CBC no diffuser **(this build)** · `0x8004` AES-XTS-128 **(this build)** ·
+`0x8005` AES-XTS-256 **(this build)** · `0x2000…` AES-CCM (key data). Only
+`0x8001` remains unimplemented (no oracle yet).
 
-## Password → VMK → FVEK
+## Password / recovery password → VMK → FVEK
+
+The **recovery-password** protector (`0x0800`) shares the VMK chain below; only
+the hash that seeds the stretch differs. A 48-digit recovery key is eight groups
+of six digits; each group must be divisible by 11 (its checksum) and, divided by
+11, fit in 16 bits. Those eight 16-bit words (little-endian) form a 16-byte
+binary key, and its `SHA-256` is the stretch input — the recovery analogue of the
+password hash below (`libbde_recovery.c`).
 
 1. **Password hash** — `SHA-256(SHA-256(UTF-16LE(password)))` (no BOM, no NUL).
 2. **Stretch** — build `struct { last[32], initial[32], salt[16], count u64 }`
@@ -77,10 +85,11 @@ AES-256-CBC no diffuser · `0x8004/0x8005` AES-XTS 128/256 · `0x2000…` AES-CC
    ciphertext (= the CCM tag). Plaintext container: `size@0, version@4, method@8,
    key@12` → **VMK = container[12..44]** (32 bytes).
 4. **FVEK/TWEAK** — AES-CCM-decrypt the top-level FVEK entry (type 0x0003, value
-   0x0005) with the VMK. For method 0x8000 the container `data_size` is `0x4c` and
-   **FVEK = container[12..44]**, **TWEAK = container[44..76]**; only the first 16
-   bytes of each are used (AES-128). Method 0x8002 (no diffuser) carries **only
-   the FVEK** at `container[12..]` — there is no TWEAK key.
+   0x0005) with the VMK. The key material starts at `container[12]`; its length
+   depends on the method: 0x8000 = 16-byte FVEK + 16-byte TWEAK (`[12..44]` /
+   `[44..76]`); 0x8002 = 16-byte FVEK only; 0x8003 = 32-byte FVEK (`[12..44]`);
+   0x8004 = 32-byte XTS key (two AES-128 keys, `[12..44]`); 0x8005 = 64-byte XTS
+   key (two AES-256 keys, `[12..76]`).
 
 AES-CCM here is standard NIST SP 800-38C (nonce 12, tag 16, no AAD, L=3), so the
 on-disk `MAC‖ciphertext` maps directly to a detached-tag CCM decrypt.
@@ -104,15 +113,30 @@ to 16. Diffuser words are 32-bit; `A: d[i] += d[i-2] ^ ROL(d[i-5], Ra[i%4])`,
 `B: d[i] += d[i+2] ^ ROL(d[i+5], Rb[i%4])` (indices mod word-count, decrypt runs
 `i` ascending).
 
-### Method 0x8002 — AES-CBC, no diffuser
+### Methods 0x8002 / 0x8003 — AES-CBC, no diffuser
 
 Identical IV and CBC step, then **stop** — no diffuser, no sector-key XOR (there
-is no TWEAK key):
+is no TWEAK key). 0x8002 is AES-128, 0x8003 is AES-256 (the IV-ECB and CBC both
+use the wider key):
 
 ```
 iv    = AES-ECB-ENC(FVEK, LE128(O))
 plain = AES-CBC-DEC(FVEK, iv, cipher)
 ```
+
+### Methods 0x8004 / 0x8005 — AES-XTS
+
+XTS decrypts each 512-byte sector as one data unit, keyed by the FVEK's two
+sub-keys (data + tweak), with the **tweak = the sector number** `O / 512`:
+
+```
+plain = XTS-AES-DEC(data_key, tweak_key, tweak = LE128(O / 512), sector)
+```
+
+0x8004 is XTS-AES-128 (two 16-byte keys), 0x8005 is XTS-AES-256 (two 32-byte
+keys). `O` is the **physical** byte offset, so in the relocated volume-header
+region the tweak follows the physical sector exactly as the CBC IV does — Tier-1
+confirmed against the BelkaCTF `vault` sector 0. Provided by the `xts-mode` crate.
 
 ## Volume-header relocation (the read-path subtlety)
 

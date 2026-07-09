@@ -16,11 +16,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `bitlocker-1.dd` image. Methods `0x8000` and `0x8002` are now both decrypted.
 - `bitlocker-core`: the encryption-method dispatch now **decodes all six
   ciphers** (`0x8000`–`0x8005`) into their three axes — key size, CBC/XTS mode,
-  and diffuser. The two oracle-validated ciphers are decrypted; the recognized
-  but unvalidated ones (`0x8001` CBC-256+diffuser, `0x8003` CBC-256, `0x8004`
-  XTS-128, `0x8005` XTS-256) are **refused with a named
-  `UnvalidatedEncryptionMethod` error** rather than decrypted by construction. A
-  value outside the range stays `UnsupportedEncryptionMethod`.
+  and diffuser — and ships a decrypt for each once a `pybde` oracle validates it.
+- `bitlocker-core`: **recovery-password unlock** —
+  `BitLockerVolume::unlock_with_recovery_password` over the recovery protector
+  (`0x0800`), with `recovery_key_hash` (48 digits → eight `÷11` words → SHA-256).
+- `bitlocker-core`: **AES-256-CBC** (`0x8003`), **XTS-AES-128** (`0x8004`), and
+  **XTS-AES-256** (`0x8005`) sector decryption. XTS keys the data unit off the
+  sector number (`byte_offset / 512`), matching CBC's physical-offset handling in
+  the relocated volume-header region. XTS is provided by the `xts-mode` crate
+  (0.5.x — cipher 0.4 / aes 0.8). Validated: `0x8003` vs self-minted `m8003`
+  (Tier-2); `0x8004` vs BelkaCTF6 `vault` (Tier-1) and `m8004` (Tier-2); `0x8005`
+  vs `m8005` (Tier-2).
+- Only AES-256-CBC + Elephant Diffuser (`0x8001`) is still recognized-but-refused
+  with a named `UnvalidatedEncryptionMethod` (no oracle yet); a value outside the
+  `0x8000`–`0x8005` range stays `UnsupportedEncryptionMethod`.
+
+### Changed
+
+- `bitlocker-core`: the `NoPasswordProtector` error is generalized to
+  `NoUnlockProtector { protector, found }` (names the attempted protector), so
+  both password and recovery-password unlock report a missing protector uniformly
+  (breaking vs 0.1.0).
 
 ## [0.1.0]
 

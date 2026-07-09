@@ -5,13 +5,14 @@ volume from its password and read the plaintext, plus an anomaly auditor over th
 key-protector metadata.
 
 !!! info "Scope"
-    This build decrypts the **password** protector (`0x2000`) over two ciphers,
-    each Tier-1 validated by `pybde`: **AES-128-CBC + Elephant Diffuser**
-    (method `0x8000`, dfvfs `bdetogo.raw`) and **AES-128-CBC** with no diffuser
-    (method `0x8002`, picoCTF `bitlocker-1.dd`). AES-256-CBC, AES-XTS, and
-    recovery-password / startup-key / TPM protectors are out of scope here; the
-    metadata parser still reports their presence. See
-    [Format Research](RESEARCH.md) and [Validation](validation.md).
+    This build decrypts the **password** (`0x2000`) and **recovery-password**
+    (`0x0800`) protectors over **five of the six** BitLocker ciphers, each
+    validated by `pybde`: AES-128-CBC ± Elephant Diffuser (`0x8000` / `0x8002`),
+    AES-256-CBC (`0x8003`), and XTS-AES-128/256 (`0x8004` / `0x8005`). Only
+    AES-256-CBC + Elephant Diffuser (`0x8001`) is recognized-but-refused (no
+    oracle yet); startup-key / TPM protectors are out of scope. The metadata
+    parser still reports their presence. See [Format Research](RESEARCH.md) and
+    [Validation](validation.md).
 
 ## What it does
 
@@ -21,11 +22,11 @@ recovery key, TPM, …) can unwrap. `bitlocker-core`:
 
 - parses the `-FVE-FS-` / BitLocker To Go volume header and the FVE metadata
   block (key protectors, cipher, volume GUID),
-- derives the VMK from a password (double-SHA-256 → 0x100000-iteration stretch →
-  AES-CCM unwrap), then the FVEK + TWEAK from the VMK,
-- decrypts sectors with AES-128-CBC (with the Elephant Diffuser for method
-  `0x8000`, without it for `0x8002`), honouring BitLocker's volume-header
-  relocation, and
+- derives the VMK from a password (double-SHA-256) or a recovery password
+  (48 digits → eight `÷11` words → SHA-256), each fed to the `0x100000`-iteration
+  stretch → AES-CCM unwrap, then the FVEK from the VMK,
+- decrypts sectors with AES-CBC (± Elephant Diffuser) or AES-XTS, 128- or
+  256-bit, honouring BitLocker's volume-header relocation, and
 - exposes a plaintext `Read + Seek` view (`read_at`).
 
 `bitlocker-forensic` grades the protector metadata into

@@ -2,22 +2,22 @@
 //!
 //! Parses the BitLocker Drive Encryption on-disk format (the `-FVE-FS-` /
 //! BitLocker To Go volume header, the FVE metadata block, and its key-protector
-//! entries) and decrypts a volume from a password, exposing a plaintext
-//! `Read + Seek` view.
+//! entries) and decrypts a volume from a password or recovery password, exposing
+//! a plaintext `Read + Seek` view.
 //!
-//! Scope of this build: the **password** protector (type `0x2000`) over
-//! **AES-128-CBC** — with the Elephant Diffuser (method `0x8000`) or without it
-//! (method `0x8002`), each validated by a Tier-1 `pybde` oracle (dfvfs
-//! `bdetogo.raw` and picoCTF `bitlocker-1.dd` respectively). AES-256-CBC,
-//! AES-XTS, recovery-password, startup-key and TPM protectors are deliberately
-//! out of scope here (see the crate README); the metadata parser still *reports*
-//! their presence.
+//! Scope of this build: the **password** (`0x2000`) and **recovery-password**
+//! (`0x0800`) protectors over **five of the six** BitLocker ciphers, each
+//! validated by a `pybde` oracle — AES-128-CBC ± Elephant Diffuser (`0x8000` /
+//! `0x8002`), AES-256-CBC (`0x8003`), and XTS-AES-128/256 (`0x8004` / `0x8005`).
+//! Only AES-256-CBC + Elephant Diffuser (`0x8001`) is recognized-but-refused (no
+//! oracle yet); startup-key and TPM protectors are out of scope for *unlock*.
+//! The metadata parser still *reports* every protector and cipher it finds.
 //!
-//! Every primitive comes from an audited RustCrypto crate — `aes`, `cbc`, `ccm`,
-//! `sha2` — except the Elephant Diffuser, for which no ecosystem crate exists;
-//! it lives in our own [`elephant_diffuser`] crate (extracted from here) and is
-//! validated **in situ** by this repo's Tier-1 oracle (never a self-authored
-//! round-trip, which would prove nothing).
+//! Every primitive comes from an audited crate — `aes`, `cbc`, `ccm`, `sha2`,
+//! and `xts-mode` for the XTS methods — except the Elephant Diffuser, for which
+//! no ecosystem crate exists; it lives in our own [`elephant_diffuser`] crate
+//! (extracted from here) and is validated **in situ** by this repo's Tier-1
+//! oracle (never a self-authored round-trip, which would prove nothing).
 //!
 //! ```no_run
 //! use std::fs::File;

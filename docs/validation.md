@@ -65,21 +65,56 @@ BDE_CBC2_ORACLE=/path/to/bitlocker-1.dd \
 The image is **not** committed (100 MiB); the test skips cleanly when the env var
 is unset. Provenance is recorded in `tests/data/README.md`.
 
+## Tier-1 — BelkaCTF6 `vault.raw` vs `pybde` (method `0x8004`, XTS-AES-128)
+
+- **Artifact**: `vault.raw`, the BitLocker volume from BelkaCTF #6 "Bogus Bill"
+  (2024, Belkasoft). BitLocker volume at byte offset 16777216; method `0x8004`
+  (XTS-AES-128). Belkasoft CTF material — **not redistributable**, not committed.
+- **Published key**: recovery password
+  `590238-514580-359986-088242-029766-319495-410509-636911` (protector `0x0800`),
+  published in the official write-up.
+- **Answer key**: `pybde`. The env-gated test `core/tests/oracle_vault.rs`
+  (`BDE_XTS_ORACLE`) reproduces each decrypted sector byte-for-byte. Sectors 0–5
+  (the relocated boot region) confirm the header-region XTS tweak uses the
+  **physical** offset (`byte_offset / 512`), exactly as CBC's IV does; deep
+  sectors 32768 / 262144 (16 / 128 MiB) confirm the tweak is the sector number.
+
+## Tier-2 — self-minted `m8003` / `m8004` / `m8005` vs `pybde`
+
+Three BitLocker volumes minted on a Windows 11 guest (`manage-bde`,
+recovery-password protector only), one per remaining cipher, decrypted
+independently by `pybde` on the host. We authored the images, so this is Tier-2
+(the answer key is an independent oracle; the scenario is ours). Env-gated on
+`BDE_MINT_ORACLE_DIR`; partition at byte 65536.
+
+| Image | Method | Test | LBA 0 SHA-256 |
+|---|---|---|---|
+| `m8003` | `0x8003` AES-256-CBC | `oracle_m8003.rs` | `7ba645fe…f09a98` |
+| `m8004` | `0x8004` XTS-AES-128 | `oracle_m8004.rs` | `bb5795df…13b2` |
+| `m8005` | `0x8005` XTS-AES-256 | `oracle_m8005.rs` | `4d42f174…a413` |
+
+Each asserts LBA 0/1/2/16/100/200 against `pybde`. Because every oracle here
+unlocks via the **recovery password**, a passing `m8003` (etc.) is also the
+end-to-end proof of the recovery-key derivation: a wrong `recovery_key_hash`
+fails the AES-CCM VMK unwrap and never reaches a matching plaintext.
+
 ## Tier-2 — independent hash vectors
 
 The password-hash step is checked against values computed independently by
 Python `hashlib` (`SHA-256(SHA-256(UTF-16LE("bde-TEST")))` =
-`f5acb5bd…ee3f`) and a two-iteration stretch vector — real hash output whose
-ground truth is derivable, not authored alongside the code.
+`f5acb5bd…ee3f`) and a two-iteration stretch vector. The **recovery-key** hash is
+likewise checked against independent Python vectors (e.g. the all-`1`s recovery
+password → `17f2c896…648e`) — real hash output whose ground truth is derivable,
+not authored alongside the code.
 
 ## Tier-3 — structural unit tests
 
-FVE metadata-entry parsing, volume-header variant detection, and both sector
-transforms' encrypt/decrypt round-trips (CBC + diffuser for `0x8000`, CBC-only
-for `0x8002`) are exercised over hand-built byte buffers. These are regression
-scaffolding under the Tier-1 oracles — a round-trip proves self-consistency
-only; the real correctness proof for each cipher and the full pipeline is
-Tier-1.
+FVE metadata-entry parsing, volume-header variant detection, and every sector
+transform's encrypt/decrypt round-trip (CBC-128 ± diffuser, CBC-256, XTS-128,
+XTS-256) plus a synthetic recovery-password volume are exercised over hand-built
+byte buffers. These are regression scaffolding under the Tier-1/2 oracles — a
+round-trip proves self-consistency only; the real correctness proof for each
+cipher and the full pipeline is the oracle.
 
 ## Fuzzing
 
