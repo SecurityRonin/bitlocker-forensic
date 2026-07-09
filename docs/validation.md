@@ -98,6 +98,28 @@ unlocks via the **recovery password**, a passing `m8003` (etc.) is also the
 end-to-end proof of the recovery-key derivation: a wrong `recovery_key_hash`
 fails the AES-CCM VMK unwrap and never reaches a matching plaintext.
 
+## Tier-2 — self-minted `clearkey` (clear-key / suspended) vs `pybde`, no credential
+
+A BitLocker volume with protection **suspended** (`manage-bde -protectors
+-disable`), which adds a **clear-key protector** (`0x0000`) storing the VMK
+unprotected. `pybde` opens it with **no credential** (`is_locked = False`); we
+authored the image, so this is Tier-2 (the answer key is an independent oracle).
+Env-gated on `BDE_CLEARKEY_ORACLE`; 256 MiB, md5
+`425e6fe34b91fb68e0026fa7d794480c`, method `0x8004`, partition at byte 65536,
+protectors `[0x0800 recovery, 0x0000 clear key]`.
+
+The env-gated test `core/tests/oracle_clearkey.rs` calls `unlock_clear_key` with
+no credential and reproduces `pybde`'s decrypted sectors byte-for-byte:
+
+| Volume offset | SHA-256 |
+|---|---|
+| 0 | `2ec4443a…6224` |
+| 16777216 (16 MiB) | `ba92072a…f9a7` |
+| 33554432 (32 MiB) | `285b610c…6235` |
+
+A passing `clearkey` is the end-to-end proof that the clear key is read from the
+VMK's KEY property and unwraps the VMK directly — no stretch, no external key.
+
 ## Tier-2 — independent hash vectors
 
 The password-hash step is checked against values computed independently by

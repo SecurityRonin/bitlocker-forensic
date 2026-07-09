@@ -7,7 +7,7 @@ members = ["core", "forensic"]
 # members inherit via `field.workspace = true`.
 # ---------------------------------------------------------------------------
 [workspace.package]
-version      = "0.2.0"
+version      = "0.3.0"
 edition      = "2021"
 rust-version = "1.81"
 license      = "Apache-2.0"
@@ -32,7 +32,7 @@ xts-mode = "0.5"
 elephant-diffuser = "0.1"
 # REUSE, don't reinvent calendar math: jiff renders FILETIME as RFC 3339.
 jiff = "0.2"
-bitlocker = { version = "0.2", path = "core", package = "bitlocker-core" }
+bitlocker = { version = "0.3", path = "core", package = "bitlocker-core" }
 forensicnomicon = { version = "1", features = ["std"] }
 
 # ---------------------------------------------------------------------------

@@ -94,6 +94,19 @@ password hash below (`libbde_recovery.c`).
 AES-CCM here is standard NIST SP 800-38C (nonce 12, tag 16, no AAD, L=3), so the
 on-disk `MAC‖ciphertext` maps directly to a detached-tag CCM decrypt.
 
+## Clear key → VMK → FVEK (no credential)
+
+A **clear-key protector** (`0x0000`) stores the VMK unprotected — Windows adds it
+when protection is *suspended* (`manage-bde -protectors -disable`). Its VMK
+properties (nested at offset 28) are a **key** (value type `0x0001`) and an
+**AES-CCM encrypted key** (`0x0005`), instead of the password path's stretch +
+AES-CCM. The FVE key value is `method(u32)@0` then the raw key data; the clear key
+is the **32 bytes at offset 4**. That clear key AES-CCM-unwraps the VMK entry
+**directly** — no password hash, no stretch — after which the FVEK/TWEAK and
+sector path are identical. `unlock_clear_key` needs no credential; a clear-key
+volume is effectively unencrypted. Tier-2 confirmed against `pybde` (which reports
+`is_locked = False` with no credential) on a suspended `0x8004` volume.
+
 ## Sector decryption — AES-CBC + Elephant Diffuser (method 0x8000)
 
 Each 512-byte sector at byte offset `O` (relative to the volume start):
@@ -152,7 +165,7 @@ relocated region.
 
 ## Out of scope in this build (structured for easy addition)
 
-AES-XTS methods (no Tier-1 oracle yet), recovery-password unlock (same stretch,
-but the 48-digit value isn't published so it can't be Tier-1 validated here),
-AES-256 CBC/diffuser, and TPM / startup-key / clear-key *unlock*. The metadata
-parser still **reports** every protector and cipher it sees.
+AES-256-CBC + Elephant Diffuser (`0x8001`, recognized-but-refused — no oracle
+yet), and **TPM / startup-key** *unlock*. The metadata parser still **reports**
+every protector and cipher it sees. Password, recovery-password, and **clear-key**
+unlock are all implemented and oracle-validated.

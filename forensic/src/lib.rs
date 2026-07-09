@@ -102,7 +102,8 @@ impl AnomalyKind {
         match self {
             AnomalyKind::ClearKeyPresent => "a clear-key protector (type 0x0000) is present; the \
                  volume master key is stored unprotected, so the volume can be decrypted with no \
-                 credential — it is effectively unencrypted"
+                 credential — it is effectively unencrypted (bitlocker-core unlocks it via \
+                 unlock_clear_key)"
                 .to_string(),
             AnomalyKind::Protector { protector_type } => format!(
                 "key protector present: {} (type 0x{protector_type:04x})",

@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0]
+
+### Added
+
+- `bitlocker-core`: **clear-key (no-credential) unlock** —
+  `BitLockerVolume::unlock_clear_key(reader)` decrypts a volume whose protection
+  is *suspended*. A clear-key protector (`0x0000`) stores the VMK unprotected; the
+  clear key held in the VMK's KEY property (value type `0x0001`: `method(u32)@0`,
+  then the 32-byte key) AES-CCM-unwraps the VMK directly — no stretch, no
+  credential — then the existing FVEK → sector path. `derive_cipher` is
+  generalized over an internal `VmkUnwrap` (stretch a credential, or read the
+  clear key); the password/recovery paths are unchanged. Tier-2 validated against
+  `pybde` (which reports `is_locked = False` with no credential) on a self-minted,
+  suspended `0x8004` volume — `unlock_clear_key` reproduces its decrypted sectors
+  byte-for-byte.
+
 ## [0.2.0]
 
 ### Added

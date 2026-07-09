@@ -99,11 +99,33 @@ BDE_CBC2_ORACLE=/path/to/bitlocker-1.dd \
 - **Used by**: `core/tests/oracle_m8003.rs` / `oracle_m8004.rs` /
   `oracle_m8005.rs` (env var `BDE_MINT_ORACLE_DIR` = the directory holding them).
 
-To run the AES-256-CBC / XTS Tier-1/2 tests:
+#### clearkey.raw (self-minted Tier-2, clear-key / suspended)
+
+- **Source**: SELF-MINTED — a BitLocker volume with protection **suspended**
+  (`manage-bde -protectors -disable`), which adds a **clear-key protector**
+  (`0x0000`) storing the VMK unprotected; `qemu-img convert` → raw. Independently
+  decrypted by `pybde` on the host with **no credential** (Tier-2 oracle).
+- **md5**: `425e6fe34b91fb68e0026fa7d794480c`.
+- **Size**: 256 MiB (MBR, one NTFS partition at **byte offset 65536**).
+- **License / redistribution**: we authored it ⇒ redistributable, but **not
+  committed** (size) — documented for provenance; re-mint per the notes in
+  `/tmp/bde-clearkey-oracle/` (`prove.py` / `verify.py`).
+- **Identity / contents**: method `0x8004` (XTS-AES-128). Protectors: recovery
+  password (`0x0800`) + **clear key** (`0x0000`). `pybde` reports
+  `is_locked = False` with no credential.
+- **Published key**: none needed — the clear-key protector unlocks with no
+  credential (`unlock_clear_key`).
+- **Used by**: `core/tests/oracle_clearkey.rs` (env var `BDE_CLEARKEY_ORACLE` =
+  path to `clearkey.raw`). Ground-truth SHA-256 digests self-derived with `pybde`
+  20240502, no credential — see `docs/validation.md`.
+
+To run the AES-256-CBC / XTS / clear-key Tier-1/2 tests:
 
 ```bash
 BDE_XTS_ORACLE=/tmp/bde-xts-oracle/vault.raw \
   cargo test -p bitlocker-core --test oracle_vault -- --nocapture
 BDE_MINT_ORACLE_DIR=/tmp/bde-mint-oracle \
   cargo test -p bitlocker-core --test oracle_m8003 --test oracle_m8004 --test oracle_m8005
+BDE_CLEARKEY_ORACLE=/tmp/bde-clearkey-oracle/clearkey.raw \
+  cargo test -p bitlocker-core --test oracle_clearkey -- --nocapture
 ```
