@@ -119,7 +119,29 @@ BDE_CBC2_ORACLE=/path/to/bitlocker-1.dd \
   path to `clearkey.raw`). Ground-truth SHA-256 digests self-derived with `pybde`
   20240502, no credential — see `docs/validation.md`.
 
-To run the AES-256-CBC / XTS / clear-key Tier-1/2 tests:
+#### sk8004.raw + `<GUID>.BEK` (self-minted Tier-2, startup-key)
+
+- **Source**: SELF-MINTED on the Parallels "Windows 11" Pro guest — `manage-bde
+  -on -EncryptionMethod xts_aes128 -RecoveryPassword` then `manage-bde -protectors
+  -add -StartupKey`, which writes the external-key `.BEK`; `qemu-img convert` →
+  raw. Independently decrypted by `pybde` `read_startup_key` on the host (Tier-2
+  oracle), cross-checked against the recovery password.
+- **md5**: `sk8004.raw` `d12f27801f52256cc3a900820cc1466d`; `.BEK`
+  (`F8A2B017-3D39-40C6-BBB4-6CCAC663B2C5.BEK`, 180 bytes) is the external key.
+- **Size**: 128 MiB (MBR, one NTFS partition at **byte offset 65536**).
+- **License / redistribution**: we authored it ⇒ redistributable, but **not
+  committed** (size) — documented for provenance; re-mint per the notes in
+  `/tmp/bde-startupkey-oracle/GROUND-TRUTH.md`.
+- **Identity / contents**: method `0x8004` (XTS-AES-128). Protectors: **startup
+  key** (`0x0200`, external-key GUID `F8A2B017-…`) + recovery password (`0x0800`,
+  safety net `154583-453959-209385-373417-403502-206052-478808-073667`). `pybde`
+  reports `is_locked = False` after `read_startup_key(.BEK)`.
+- **Published key**: the `.BEK` file itself (the 256-bit external key).
+- **Used by**: `core/tests/oracle_startupkey.rs` (env var `BDE_STARTUPKEY_ORACLE`
+  = path to `sk8004.raw`; the `.BEK` is auto-located beside it). Ground-truth
+  SHA-256 digests self-derived with `pybde` 20240502 — see `docs/validation.md`.
+
+To run the AES-256-CBC / XTS / clear-key / startup-key Tier-1/2 tests:
 
 ```bash
 BDE_XTS_ORACLE=/tmp/bde-xts-oracle/vault.raw \

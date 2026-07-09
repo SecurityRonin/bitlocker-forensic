@@ -120,6 +120,24 @@ no credential and reproduces `pybde`'s decrypted sectors byte-for-byte:
 A passing `clearkey` is the end-to-end proof that the clear key is read from the
 VMK's KEY property and unwraps the VMK directly — no stretch, no external key.
 
+## Tier-2 — self-minted `sk8004` (startup-key / `.BEK`) vs `pybde`
+
+A BitLocker `0x8004` volume minted with a **startup-key protector** (`0x0200`):
+`manage-bde -protectors -add -StartupKey` writes an external-key `.BEK`. `pybde`
+`read_startup_key(.BEK)` opens it (`is_locked = False`); we authored the image, so
+this is Tier-2 (the answer key is an independent oracle). Env-gated on
+`BDE_STARTUPKEY_ORACLE`; 128 MiB, `sk8004.raw` md5
+`d12f27801f52256cc3a900820cc1466d`, method `0x8004`, partition at byte 65536,
+protectors `[0x0800 recovery, 0x0200 startup key]`, external-key GUID
+`F8A2B017-3D39-40C6-BBB4-6CCAC663B2C5`.
+
+The env-gated test `core/tests/oracle_startupkey.rs` calls `unlock_with_startup_key`
+with the `.BEK` bytes and reproduces `pybde`'s decrypted sectors byte-for-byte (LBA
+0/1/2/16/100/200). Two independent facts confirm the `.BEK` parse and the external
+key: `pybde`'s `read_startup_key` agrees, **and** the `.BEK`-decrypted plaintext
+equals the recovery-password-decrypted plaintext (the external key and the recovery
+key unwrap the same VMK).
+
 ## Tier-2 — independent hash vectors
 
 The password-hash step is checked against values computed independently by

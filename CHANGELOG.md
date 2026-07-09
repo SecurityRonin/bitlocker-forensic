@@ -10,6 +10,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `bitlocker-core`: **startup-key (`.BEK`) unlock** —
+  `BitLockerVolume::unlock_with_startup_key(reader, bek_bytes)` decrypts a volume
+  protected by a startup key on removable media. The `.BEK` is a 48-byte FVE
+  metadata header followed by an external-key entry (value type `0x0009`) whose
+  nested KEY property (`0x0001`) holds a raw 256-bit key; that key AES-CCM-unwraps
+  the VMK directly — no stretch — via the startup-key protector (`0x0200`), then
+  the existing FVEK → sector path. The `.BEK` parse is bounds-checked (loud error,
+  never panic). Tier-2 validated against `pybde` `read_startup_key` on a self-minted
+  `0x8004` volume: all sectors match byte-for-byte, and the `.BEK`-decrypted
+  plaintext equals the recovery-password-decrypted plaintext (independent VMK
+  confirmation). With password / recovery / clear-key, this is **4 of 5** unlock
+  protectors.
 - `bitlocker-core`: **clear-key (no-credential) unlock** —
   `BitLockerVolume::unlock_clear_key(reader)` decrypts a volume whose protection
   is *suspended*. A clear-key protector (`0x0000`) stores the VMK unprotected; the

@@ -35,10 +35,11 @@ assert_eq!(&boot[3..11], b"MSWIN4.1");
 
 ## Scope
 
-This build unlocks the **password** (`0x2000`), **recovery-password** (`0x0800`),
-and **clear-key** (`0x0000`, no credential — a suspended volume) protectors and
-decrypts **five of the six** BitLocker ciphers, each validated against a `pybde`
-oracle:
+This build unlocks **four of the five** BitLocker unlock protectors — **password**
+(`0x2000`), **recovery-password** (`0x0800`), **clear-key** (`0x0000`, no
+credential — a suspended volume), and **startup-key** (`0x0200`, a `.BEK` external
+key) — and decrypts **five of the six** BitLocker ciphers, each validated against a
+`pybde` oracle:
 
 | Method | Cipher | Oracle (tier) |
 |---|---|---|
@@ -49,14 +50,17 @@ oracle:
 | `0x8005` | XTS-AES-256 | self-minted `m8005` (Tier-2) |
 
 `BitLockerVolume::unlock_clear_key(reader)` unlocks a **clear-key** volume with no
-credential (Tier-2, self-minted `clearkey` vs `pybde`). The dispatch decodes all
-six ciphers (`0x8000`–`0x8005`) into their axes and ships a decrypt for a cipher
-only once a real oracle validates it. The remaining method, AES-256-CBC + Elephant
-Diffuser (`0x8001`), is **recognized and refused with a named error** — never
-decrypted by construction — so it lights up as a one-line change plus a test the
-moment it gets an oracle. Startup-key and TPM protectors are out of scope for
-*unlock*, but the metadata parser still **reports** every protector and cipher it
-finds. See [`docs/RESEARCH.md`](docs/RESEARCH.md).
+credential (Tier-2, self-minted `clearkey` vs `pybde`), and
+`BitLockerVolume::unlock_with_startup_key(reader, bek_bytes)` unlocks a
+**startup-key** volume from its `.BEK` external-key file (Tier-2, self-minted
+`sk8004` vs `pybde` `read_startup_key`, cross-checked against the recovery
+password). The dispatch decodes all six ciphers (`0x8000`–`0x8005`) into their axes
+and ships a decrypt for a cipher only once a real oracle validates it. The remaining
+method, AES-256-CBC + Elephant Diffuser (`0x8001`), is **recognized and refused with
+a named error** — never decrypted by construction — so it lights up as a one-line
+change plus a test the moment it gets an oracle. The TPM protector is out of scope
+for *unlock*, but the metadata parser still **reports** every protector and cipher
+it finds. See [`docs/RESEARCH.md`](docs/RESEARCH.md).
 
 ## The two-crate split
 
