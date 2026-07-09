@@ -78,7 +78,7 @@ impl BitLockerVolume {
 
     /// Unlock the volume with a 48-digit `recovery` password, returning a
     /// plaintext view. Uses the recovery protector (`0x0800`) and the recovery
-    /// key-derivation ([`crate::crypto::recovery_key_hash`]).
+    /// key-derivation (`recovery_key_hash`).
     ///
     /// # Errors
     /// [`BdeError::InvalidRecoveryPassword`] if the recovery password is
