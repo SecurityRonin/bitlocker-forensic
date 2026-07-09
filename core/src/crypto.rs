@@ -510,4 +510,16 @@ mod tests {
         assert_ne!(ct, plain);
         assert_eq!(cipher.decrypt_sector(&ct, off), plain);
     }
+
+    #[test]
+    fn sector_cipher_xts256_roundtrip() {
+        // Method 0x8005: XTS-AES-256 (Tier-3 self-consistency; the Tier-2 proof
+        // is oracle_m8005.rs).
+        let cipher = SectorCipher::new_xts256([0x46; 64]);
+        let plain = sample_sector();
+        let off = 0x0211_0800u64;
+        let ct = cipher.encrypt_sector(&plain, off);
+        assert_ne!(ct, plain);
+        assert_eq!(cipher.decrypt_sector(&ct, off), plain);
+    }
 }
