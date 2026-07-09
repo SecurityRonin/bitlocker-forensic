@@ -207,7 +207,25 @@ fn derive_cipher(
             let fvek = take_key32(&fvek_container, 12, "FVEK")?;
             Ok(SectorCipher::new_xts128(fvek))
         }
+        SectorCipherKind::Xts256 => {
+            // XTS-256 carries a 64-byte key (two AES-256 keys) at offset 12.
+            let fvek = take_key64(&fvek_container, 12, "FVEK")?;
+            Ok(SectorCipher::new_xts256(fvek))
+        }
     }
+}
+
+fn take_key64(container: &[u8], off: usize, what: &'static str) -> Result<[u8; 64]> {
+    let s = container
+        .get(off..off + 64)
+        .ok_or(BdeError::MalformedKeyContainer {
+            what,
+            got: container.len(),
+            need: off + 64,
+        })?;
+    let mut k = [0u8; 64];
+    k.copy_from_slice(s);
+    Ok(k)
 }
 
 fn take_key32(container: &[u8], off: usize, what: &'static str) -> Result<[u8; 32]> {
@@ -950,19 +968,17 @@ mod tests {
     }
 
     #[test]
-    fn recognized_but_unvalidated_methods_refuse() {
-        // 0x8001 CBC-256+diffuser and 0x8005 XTS-256 are recognized by the
-        // dispatch but have no Tier-1/2 oracle yet — they must refuse (naming
-        // the method), never by-construction decrypt. The refusal is gated
-        // before key derivation. (0x8003/0x8004 are now oracle-validated.)
-        for m in [0x8001u16, 0x8005] {
-            let img = meta_only_image(m, &[0x2000], [0x1000, 0, 0], Some(0x1000));
-            let res = BitLockerVolume::unlock_with_password(Cursor::new(img), "x");
-            assert!(
-                matches!(res, Err(BdeError::UnvalidatedEncryptionMethod { method }) if method == m),
-                "method {m:#06x} must be recognized-but-unvalidated"
-            );
-        }
+    fn recognized_but_unvalidated_method_refuses() {
+        // Only 0x8001 (CBC-256 + Elephant Diffuser) is still recognized by the
+        // dispatch without a Tier-1/2 oracle — it must refuse (naming the
+        // method), never by-construction decrypt. The refusal is gated before
+        // key derivation. (0x8002–0x8005 are all now oracle-validated.)
+        let img = meta_only_image(0x8001, &[0x2000], [0x1000, 0, 0], Some(0x1000));
+        let res = BitLockerVolume::unlock_with_password(Cursor::new(img), "x");
+        assert!(matches!(
+            res,
+            Err(BdeError::UnvalidatedEncryptionMethod { method: 0x8001 })
+        ));
     }
 
     #[test]

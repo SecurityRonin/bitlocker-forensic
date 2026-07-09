@@ -162,6 +162,8 @@ enum SectorTransform {
     Cbc256 { fvek: [u8; 32], fvek_ecb: Aes256 },
     /// XTS-AES-128, tweak = sector number (method 0x8004).
     Xts128 { xts: XtsCipher<Aes128> },
+    /// XTS-AES-256, tweak = sector number (method 0x8005).
+    Xts256 { xts: XtsCipher<Aes256> },
 }
 
 /// The volume sector cipher: a validated [`SectorTransform`] plus the read-path
@@ -222,6 +224,19 @@ impl SectorCipher {
         }
     }
 
+    /// Build a method-0x8005 cipher (XTS-AES-256) from the 64-byte FVEK: the
+    /// first 32 bytes key the data cipher, the next 32 the tweak cipher.
+    #[must_use]
+    pub fn new_xts256(fvek: [u8; 64]) -> SectorCipher {
+        let data = Aes256::new(GenericArray::from_slice(&fvek[0..32]));
+        let tweak = Aes256::new(GenericArray::from_slice(&fvek[32..64]));
+        SectorCipher {
+            transform: SectorTransform::Xts256 {
+                xts: XtsCipher::new(data, tweak),
+            },
+        }
+    }
+
     /// AES-ECB-encrypt one block with `cipher` (used for the CBC IV and the
     /// diffuser sector key). Works for any AES key size (16-byte block).
     fn ecb<C>(cipher: &C, input: &[u8; 16]) -> [u8; 16]
@@ -273,6 +288,30 @@ impl SectorCipher {
         }
     }
 
+    /// XTS-decrypt one sector in place. BitLocker keys the XTS data unit off the
+    /// sector number (`byte_offset / 512`). Generic over the AES key size so
+    /// XTS-128 and XTS-256 share one body. The 16-byte guard keeps the panic-free
+    /// contract if a caller ever passes a sub-block slice (the read path never
+    /// does); XTS needs at least one full block.
+    fn xts_decrypt_sector<C>(xts: &XtsCipher<C>, buf: &mut [u8], byte_offset: u64)
+    where
+        C: BlockEncrypt + BlockDecrypt + BlockCipher,
+    {
+        if buf.len() >= 16 {
+            xts.decrypt_sector(buf, get_tweak_default(u128::from(byte_offset / 512)));
+        }
+    }
+
+    /// XTS-encrypt one sector in place — inverse of [`Self::xts_decrypt_sector`],
+    /// used only by the round-trip self-consistency tests.
+    #[cfg(test)]
+    fn xts_encrypt_sector<C>(xts: &XtsCipher<C>, buf: &mut [u8], byte_offset: u64)
+    where
+        C: BlockEncrypt + BlockDecrypt + BlockCipher,
+    {
+        xts.encrypt_sector(buf, get_tweak_default(u128::from(byte_offset / 512)));
+    }
+
     /// Decrypt one sector of `cipher` at volume byte offset `byte_offset`.
     /// The sector length must be a non-zero multiple of 16.
     #[must_use]
@@ -297,15 +336,8 @@ impl SectorCipher {
                 let cbc_iv = Self::ecb(fvek_ecb, &iv);
                 let _ = Self::cbc_decrypt_inplace::<Aes256>(fvek, &cbc_iv, &mut buf);
             }
-            SectorTransform::Xts128 { xts } => {
-                // XTS data unit = the 512-byte sector; tweak = the sector number.
-                // The 16-byte-block guard keeps the panic-free contract if a
-                // caller ever passes a sub-block slice (the read path never does).
-                if buf.len() >= 16 {
-                    let tweak = get_tweak_default(u128::from(byte_offset / 512));
-                    xts.decrypt_sector(&mut buf, tweak);
-                }
-            }
+            SectorTransform::Xts128 { xts } => Self::xts_decrypt_sector(xts, &mut buf, byte_offset),
+            SectorTransform::Xts256 { xts } => Self::xts_decrypt_sector(xts, &mut buf, byte_offset),
         }
         buf
     }
@@ -346,10 +378,8 @@ impl SectorCipher {
                 .encrypt_padded_mut::<NoPadding>(&mut buf[..len], len)
                 .unwrap();
             }
-            SectorTransform::Xts128 { xts } => {
-                let tweak = get_tweak_default(u128::from(byte_offset / 512));
-                xts.encrypt_sector(&mut buf, tweak);
-            }
+            SectorTransform::Xts128 { xts } => Self::xts_encrypt_sector(xts, &mut buf, byte_offset),
+            SectorTransform::Xts256 { xts } => Self::xts_encrypt_sector(xts, &mut buf, byte_offset),
         }
         buf
     }

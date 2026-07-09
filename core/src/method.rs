@@ -53,6 +53,8 @@ pub enum SectorCipherKind {
     Cbc256,
     /// XTS-AES-128 (method 0x8004).
     Xts128,
+    /// XTS-AES-256 (method 0x8005).
+    Xts256,
 }
 
 impl EncryptionMethod {
@@ -93,6 +95,7 @@ impl EncryptionMethod {
             (CipherMode::Cbc, 128, false) => Some(SectorCipherKind::Cbc128),
             (CipherMode::Cbc, 256, false) => Some(SectorCipherKind::Cbc256),
             (CipherMode::Xts, 128, false) => Some(SectorCipherKind::Xts128),
+            (CipherMode::Xts, 256, false) => Some(SectorCipherKind::Xts256),
             _ => None,
         }
     }
@@ -146,13 +149,15 @@ mod tests {
             EncryptionMethod::decode(0x8004).unwrap().validated_kind(),
             Some(SectorCipherKind::Xts128)
         );
-        // No oracle-backed decrypt yet: CBC-256+diffuser and XTS-256.
-        for raw in [0x8001u16, 0x8005] {
-            assert_eq!(
-                EncryptionMethod::decode(raw).unwrap().validated_kind(),
-                None,
-                "{raw:#06x} has no oracle yet"
-            );
-        }
+        assert_eq!(
+            EncryptionMethod::decode(0x8005).unwrap().validated_kind(),
+            Some(SectorCipherKind::Xts256)
+        );
+        // No oracle-backed decrypt yet: only CBC-256 + Elephant Diffuser (0x8001).
+        assert_eq!(
+            EncryptionMethod::decode(0x8001).unwrap().validated_kind(),
+            None,
+            "0x8001 has no oracle yet"
+        );
     }
 }
