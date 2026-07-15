@@ -7,7 +7,16 @@
 //! the contract: pull a credential from the [`CredentialSource`], call the
 //! matching `unlock_*`, and expose the result as a positioned-read source.
 
-use forensic_vfs::{CredentialSource, CryptoLayer, CryptoScheme, DynSource, VfsError, VfsResult};
+use std::io::{Read, Seek};
+use std::sync::{Arc, Mutex, PoisonError};
+
+use forensic_vfs::adapters::SourceCursor;
+use forensic_vfs::{
+    Credential, CredentialSource, CryptoLayer, CryptoScheme, DynSource, ImageSource, VfsError,
+    VfsResult,
+};
+
+use crate::{BitLockerVolume, DecryptedVolume};
 
 /// A BitLocker-encrypted volume presented as a [`CryptoLayer`].
 pub struct BitlockerLayer {
@@ -23,17 +32,95 @@ impl BitlockerLayer {
     }
 }
 
+/// Translate a bitlocker-core error into the VFS error type: a bad key / bad
+/// header is a loud [`VfsError::Decode`].
+fn map_bde_err(e: &crate::BdeError) -> VfsError {
+    VfsError::Decode {
+        layer: "bitlocker",
+        offset: 0,
+        detail: e.to_string(),
+        bytes: forensic_vfs::SmallHex::new(&[]),
+    }
+}
+
 impl CryptoLayer for BitlockerLayer {
     fn scheme(&self) -> CryptoScheme {
         CryptoScheme::Bitlocker
     }
 
-    fn open(&self, _creds: &dyn CredentialSource) -> VfsResult<DynSource> {
-        // RED: decryption not wired yet.
-        Err(VfsError::NeedCredentials {
-            scheme: "bitlocker",
-            target: String::new(),
-        })
+    fn open(&self, creds: &dyn CredentialSource) -> VfsResult<DynSource> {
+        let cands = creds.credentials_for(CryptoScheme::Bitlocker, "");
+        if cands.is_empty() {
+            return Err(VfsError::NeedCredentials {
+                scheme: "bitlocker",
+                target: String::new(),
+            });
+        }
+        // Try each offered credential; a fresh Read+Seek view of the ciphertext
+        // per attempt (unlock consumes the reader).
+        let mut last_err = None;
+        for cred in &cands {
+            let cursor = SourceCursor::new(Arc::clone(&self.encrypted), 0, self.len);
+            let attempt = match cred {
+                Credential::Password(p) => BitLockerVolume::unlock_with_password(cursor, p),
+                Credential::RecoveryKey(rk) => {
+                    BitLockerVolume::unlock_with_recovery_password(cursor, rk)
+                }
+                // KeyBytes / KeyFile are not a BitLocker protector this layer wires.
+                _ => continue,
+            };
+            match attempt {
+                Ok(vol) => return Ok(Arc::new(BitlockerSource::new(vol))),
+                Err(e) => last_err = Some(e),
+            }
+        }
+        // Credentials were offered but none unlocked → a loud bad-key Decode,
+        // never a silent empty or a guess.
+        Err(last_err.as_ref().map_or(
+            VfsError::NeedCredentials {
+                scheme: "bitlocker",
+                target: String::new(),
+            },
+            map_bde_err,
+        ))
+    }
+}
+
+/// A decrypted BitLocker volume presented as a read-only [`ImageSource`]. Reads
+/// serialize through a poison-recovering `Mutex` (bitlocker-core's `read_at`
+/// advances an internal cursor).
+struct BitlockerSource<R: Read + Seek> {
+    inner: Mutex<DecryptedVolume<R>>,
+    len: u64,
+}
+
+impl<R: Read + Seek> BitlockerSource<R> {
+    fn new(vol: DecryptedVolume<R>) -> Self {
+        let len = vol.volume_size();
+        Self {
+            inner: Mutex::new(vol),
+            len,
+        }
+    }
+}
+
+impl<R: Read + Seek + Send> ImageSource for BitlockerSource<R> {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let avail = self.len.saturating_sub(offset);
+        if avail == 0 {
+            return Ok(0);
+        }
+        let want = (buf.len() as u64).min(avail) as usize;
+        let Some(dst) = buf.get_mut(..want) else {
+            return Ok(0); // cov:unreachable: want <= buf.len() by the min above
+        };
+        let mut guard = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        guard.read_at(offset, dst).map_err(|e| map_bde_err(&e))?;
+        Ok(want)
     }
 }
 
