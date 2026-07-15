@@ -15,6 +15,15 @@ exclude      = ["/fuzz", "/.github", "/docs"]
 [lib]
 name = "bitlocker"
 
+[features]
+default = []
+# forensic-vfs CryptoLayer contract (optional): present a BitLocker-encrypted
+# volume as a decrypted ImageSource. Behind the `vfs` feature so the bare reader
+# does not inherit the VFS dependency graph (ADR 0004). The decryption itself is
+# bitlocker-core's (audited RustCrypto + the elephant-diffuser crate); this only
+# wires the contract.
+vfs = ["dep:forensic-vfs"]
+
 [dependencies]
 thiserror = { workspace = true }
 aes  = { workspace = true }
@@ -23,6 +32,7 @@ ccm  = { workspace = true }
 sha2 = { workspace = true }
 xts-mode = { workspace = true }
 elephant-diffuser = { workspace = true }
+forensic-vfs = { version = "0.1", optional = true }
 
 [dev-dependencies]
 # Tier-1 oracle: hash decrypted sectors of the real dfvfs bdetogo.raw image and

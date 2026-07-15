@@ -42,6 +42,8 @@ mod header;
 mod metadata;
 mod method;
 mod volume;
+#[cfg(feature = "vfs")]
+pub mod vfs;
 
 pub use error::{BdeError, Result};
 pub use guid::format_guid;
