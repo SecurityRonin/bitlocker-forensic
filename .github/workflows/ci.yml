@@ -30,7 +30,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@9bdad043e88c75890e36ad3bbc8d27f0090dd609 # v2.7.8
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
@@ -42,7 +42,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9bdad043e88c75890e36ad3bbc8d27f0090dd609 # v2.7.8
-      - run: cargo test --workspace
+      - run: cargo test --workspace --all-features
 
   msrv:
     name: MSRV (1.81)
@@ -51,6 +51,9 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@1.81
       - uses: Swatinem/rust-cache@9bdad043e88c75890e36ad3bbc8d27f0090dd609 # v2.7.8
+      # Default features only: the low-MSRV promise covers the bare reader for
+      # third-party reuse. The optional `vfs` feature pulls forensic-vfs (MSRV
+      # 1.85); its higher floor is deliberate and validated by the other jobs.
       - run: cargo build --workspace
 
   coverage:
@@ -73,7 +76,7 @@ jobs:
       # a future change. Such lines cannot be exercised by any test and are
       # exempt. The gate fails on any OTHER zero-hit line.
       - name: Generate lcov
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
       - name: Enforce line coverage (unreachable defensive arms must carry // cov:unreachable)
         shell: bash
         run: |
@@ -111,4 +114,4 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9bdad043e88c75890e36ad3bbc8d27f0090dd609 # v2.7.8
-      - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --all-features
