@@ -6,6 +6,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1]
+
+### Added
+
+- `bitlocker-core`: **`forensic-vfs` `CryptoLayer` adapter** behind the optional
+  `vfs` feature. `bitlocker::vfs::BitlockerLayer` wraps an encrypted BitLocker
+  volume (a `forensic-vfs` `ImageSource`) and, given a `Credential`, presents the
+  **decrypted** volume as a `DynSource` a normal filesystem mounts unchanged. It
+  pulls a credential from the `CredentialSource`, calls the matching `unlock_*`,
+  and exposes the plaintext as a positioned-read source; offered-but-failing
+  credentials surface as a loud `VfsError::Decode`, no credentials as
+  `VfsError::NeedCredentials` — never a silent guess. The decryption is
+  bitlocker-core's own audited RustCrypto + the `elephant-diffuser` crate; this
+  module only wires the contract. Bare-reader consumers are unaffected: the `vfs`
+  dependency graph is off by default. Validated against the real dfVFS
+  `bdetogo.raw` image (Tier-1) and by hermetic synthetic-volume tests.
+
+### Changed
+
+- `forensic-vfs` dependency `0.1` → `0.2` (published registry). The optional
+  `vfs` feature raises that path's effective MSRV to forensic-vfs's `1.85`; the
+  bare reader keeps its `1.81` floor (the MSRV job builds default features only).
+
 ## [0.3.0]
 
 ### Added
