@@ -32,7 +32,7 @@ ccm  = { workspace = true }
 sha2 = { workspace = true }
 xts-mode = { workspace = true }
 elephant-diffuser = { workspace = true }
-forensic-vfs = { version = "0.1", optional = true }
+forensic-vfs = { version = "0.2", optional = true }
 
 [dev-dependencies]
 # Tier-1 oracle: hash decrypted sectors of the real dfvfs bdetogo.raw image and
