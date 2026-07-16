@@ -41,6 +41,8 @@ mod guid;
 mod header;
 mod metadata;
 mod method;
+#[cfg(feature = "vfs")]
+pub mod vfs;
 mod volume;
 
 pub use error::{BdeError, Result};
