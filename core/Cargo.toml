@@ -17,7 +17,7 @@ name = "bitlocker"
 
 [features]
 default = []
-# forensic-vfs CryptoLayer contract (optional): present a BitLocker-encrypted
+# forensic-vfs EncryptionLayer contract (optional): present a BitLocker-encrypted
 # volume as a decrypted ImageSource. Behind the `vfs` feature so the bare reader
 # does not inherit the VFS dependency graph (ADR 0004). The decryption itself is
 # bitlocker-core's (audited RustCrypto + the elephant-diffuser crate); this only

@@ -1,6 +1,6 @@
 //! Tier-1 oracle for the `forensic-vfs` [`BitlockerLayer`] adapter: wrap the
 //! real dfvfs `bdetogo.raw` image as a `DynSource`, unlock it through the
-//! `CryptoLayer` contract with the published password, and confirm the decrypted
+//! `EncryptionLayer` contract with the published password, and confirm the decrypted
 //! boot sector is the original FAT (OEM name `mkdosfs`), matching `pybde`.
 //!
 //! Env-gated on `BDE_ORACLE_IMAGE` — skips cleanly when the image is absent (it
@@ -19,11 +19,11 @@ use std::sync::Arc;
 
 use bitlocker::vfs::BitlockerLayer;
 use forensic_vfs::adapters::FileSource;
-use forensic_vfs::{Credential, CredentialSource, CryptoLayer, CryptoScheme, DynSource};
+use forensic_vfs::{Credential, CredentialSource, DynSource, EncryptionLayer, EncryptionScheme};
 
 struct FixedCreds(Vec<Credential>);
 impl CredentialSource for FixedCreds {
-    fn credentials_for(&self, _scheme: CryptoScheme, _target: &str) -> Vec<Credential> {
+    fn credentials_for(&self, _scheme: EncryptionScheme, _target: &str) -> Vec<Credential> {
         self.0.clone()
     }
 }
@@ -37,7 +37,7 @@ fn tier1_bitlocker_cryptolayer_decrypts_bdetogo() {
 
     let src: DynSource = Arc::new(FileSource::open(&path).expect("open BDE_ORACLE_IMAGE"));
     let layer = BitlockerLayer::new(src);
-    assert_eq!(layer.scheme(), CryptoScheme::Bitlocker);
+    assert_eq!(layer.scheme(), EncryptionScheme::Bitlocker);
 
     let creds = FixedCreds(vec![Credential::Password("bde-TEST".to_string())]);
     let dec: DynSource = layer.open(&creds).expect("unlock bdetogo.raw");

@@ -1,4 +1,4 @@
-//! `forensic-vfs` [`CryptoLayer`] adapter for BitLocker, behind the `vfs` feature.
+//! `forensic-vfs` [`EncryptionLayer`] adapter for BitLocker, behind the `vfs` feature.
 //!
 //! Wraps an encrypted BitLocker volume (a parent [`ImageSource`]) and, given a
 //! credential, presents the **decrypted** volume as a [`DynSource`] a normal
@@ -12,13 +12,13 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use forensic_vfs::adapters::SourceCursor;
 use forensic_vfs::{
-    Credential, CredentialSource, CryptoLayer, CryptoScheme, DynSource, ImageSource, VfsError,
-    VfsResult,
+    Credential, CredentialSource, DynSource, EncryptionLayer, EncryptionScheme, ImageSource,
+    VfsError, VfsResult,
 };
 
 use crate::{BitLockerVolume, DecryptedVolume};
 
-/// A BitLocker-encrypted volume presented as a [`CryptoLayer`].
+/// A BitLocker-encrypted volume presented as a [`EncryptionLayer`].
 pub struct BitlockerLayer {
     encrypted: DynSource,
     len: u64,
@@ -43,13 +43,13 @@ fn map_bde_err(e: &crate::BdeError) -> VfsError {
     }
 }
 
-impl CryptoLayer for BitlockerLayer {
-    fn scheme(&self) -> CryptoScheme {
-        CryptoScheme::Bitlocker
+impl EncryptionLayer for BitlockerLayer {
+    fn scheme(&self) -> EncryptionScheme {
+        EncryptionScheme::Bitlocker
     }
 
     fn open(&self, creds: &dyn CredentialSource) -> VfsResult<DynSource> {
-        let cands = creds.credentials_for(CryptoScheme::Bitlocker, "");
+        let cands = creds.credentials_for(EncryptionScheme::Bitlocker, "");
         if cands.is_empty() {
             return Err(VfsError::NeedCredentials {
                 scheme: "bitlocker",
@@ -134,14 +134,14 @@ mod tests {
     };
     use forensic_vfs::adapters::SeekPoolSource;
     use forensic_vfs::{
-        Credential, CredentialSource, CryptoLayer, CryptoScheme, DynSource, VfsError,
+        Credential, CredentialSource, DynSource, EncryptionLayer, EncryptionScheme, VfsError,
     };
     use std::io::Cursor;
     use std::sync::Arc;
 
     struct FixedCreds(Vec<Credential>);
     impl CredentialSource for FixedCreds {
-        fn credentials_for(&self, _scheme: CryptoScheme, _target: &str) -> Vec<Credential> {
+        fn credentials_for(&self, _scheme: EncryptionScheme, _target: &str) -> Vec<Credential> {
             self.0.clone()
         }
     }
@@ -245,7 +245,7 @@ mod tests {
     fn cryptolayer_decrypts_synthetic_and_reads_back() {
         let (enc, plain) = build_encrypted("test-pw");
         let layer = BitlockerLayer::new(enc);
-        assert_eq!(layer.scheme(), CryptoScheme::Bitlocker);
+        assert_eq!(layer.scheme(), EncryptionScheme::Bitlocker);
 
         let creds = FixedCreds(vec![Credential::Password("test-pw".to_string())]);
         let dec: DynSource = layer.open(&creds).expect("unlock synthetic volume");

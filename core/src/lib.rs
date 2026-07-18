@@ -43,6 +43,8 @@ mod metadata;
 mod method;
 #[cfg(feature = "vfs")]
 pub mod vfs;
+#[cfg(feature = "vfs")]
+pub use vfs::BitlockerLayer;
 mod volume;
 
 pub use error::{BdeError, Result};
