@@ -7,7 +7,7 @@ members = ["core", "forensic"]
 # members inherit via `field.workspace = true`.
 # ---------------------------------------------------------------------------
 [workspace.package]
-version      = "0.3.3"
+version      = "0.3.4"
 edition      = "2021"
 rust-version = "1.81"
 license      = "Apache-2.0"
