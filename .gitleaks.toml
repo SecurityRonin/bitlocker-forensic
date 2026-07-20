@@ -1,3 +1,14 @@
 # gitleaks configuration — extends the default ruleset.
 [extend]
 useDefault = true
+
+# The default `generic-api-key` rule false-positives on documentation prose that
+# pairs a keyword like "Password" with an algorithm/KDF name — e.g. the CHANGELOG
+# line "Password unlock: double-SHA-256". These are cryptographic algorithm names,
+# never credentials. Allowlist the specific tokens narrowly (not the whole file,
+# so a real secret committed to docs is still caught).
+[allowlist]
+description = "Algorithm/KDF names in docs are not secrets"
+regexes = [
+  '''double-SHA-256''',
+]
