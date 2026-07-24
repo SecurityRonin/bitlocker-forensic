@@ -45,8 +45,17 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Design & Scope: PRD.md
   - Format Research: RESEARCH.md
   - Validation: validation.md
+  - Decisions:
+      - "ADR 0001 — Reader/analyzer split": decisions/0001-reader-analyzer-two-crate-split.md
+      - "ADR 0002 — From-scratch audited crypto": decisions/0002-from-scratch-audited-crypto.md
+      - "ADR 0003 — Panic-free, fuzzed, forbid(unsafe)": decisions/0003-panic-free-fuzzed-forbid-unsafe.md
+      - "ADR 0004 — Optional forensic-vfs layer": decisions/0004-optional-forensic-vfs-encryption-layer.md
+      - "ADR 0005 — Axis decode; refuse unvalidated": decisions/0005-axis-method-decode-refuse-unvalidated.md
+      - "ADR 0006 — On-disk format variants": decisions/0006-on-disk-format-variant-detection.md
+      - "ADR 0007 — MSRV floor & release-plz": decisions/0007-low-msrv-floor-and-release-plz.md
   - Privacy Policy: privacy.md
   - Terms of Service: terms.md
 
