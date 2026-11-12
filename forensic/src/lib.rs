@@ -1,5 +1,8 @@
 //! # bitlocker-forensic — BitLocker metadata anomaly auditor
 //!
+//! Public items here take or return `bitlocker` types (`FveMetadata` in `audit`, `bitlocker::error` in `audit_reader`), so `bitlocker-core` is a
+//! public dependency: an incompatible `bitlocker-core` changes this crate's API as well.
+//!
 //! Emits severity-graded [`forensicnomicon::report::Finding`]s over the
 //! key-protector and cipher metadata decoded by [`bitlocker`].
 //! Findings are OBSERVATIONS, never verdicts — the examiner draws conclusions.
