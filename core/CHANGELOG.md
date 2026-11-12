@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/SecurityRonin/bitlocker-forensic/compare/bitlocker-core-v0.3.5...bitlocker-core-v0.4.0) - 2026-11-12
+
+### Fixed
+
+- *(vfs)* [**breaking**] implement forensic-vfs 0.10, the trait the engine links against
+
 ## [0.3.5](https://github.com/SecurityRonin/bitlocker-forensic/compare/bitlocker-core-v0.3.4...bitlocker-core-v0.3.5) - 2026-07-20
 
 ### Fixed
